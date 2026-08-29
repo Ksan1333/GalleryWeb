@@ -1,0 +1,193 @@
+.book-viewer-settings {
+  display: grid;
+  gap: 18px;
+  border: 1px solid rgba(204, 166, 252, 0.14);
+  border-radius: 16px;
+  padding: 18px;
+  color: #f4edff;
+  background:
+    radial-gradient(circle at 100% 0, rgba(160, 96, 231, 0.13), transparent 36%),
+    rgba(23, 18, 31, 0.8);
+}
+
+.book-viewer-settings > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.book-viewer-settings > header > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border-radius: 12px;
+  color: #d2adff;
+  background: rgba(169, 109, 238, 0.14);
+}
+
+.book-viewer-settings > header svg {
+  width: 20px;
+  height: 20px;
+}
+
+.book-viewer-settings h3,
+.book-viewer-settings p {
+  margin: 0;
+}
+
+.book-viewer-settings h3 {
+  font-size: 14px;
+}
+
+.book-viewer-settings header p {
+  margin-top: 4px;
+  color: #9589a1;
+  font-size: 10px;
+}
+
+.book-viewer-settings fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.book-viewer-settings fieldset:disabled {
+  opacity: .58;
+}
+
+.book-viewer-settings legend {
+  margin-bottom: 8px;
+  color: #ad9bbb;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.book-viewer-settings fieldset > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.book-viewer-settings fieldset button {
+  display: flex;
+  min-width: 0;
+  min-height: 56px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 11px;
+  padding: 8px 11px;
+  color: #b9aabd;
+  background: rgba(255, 255, 255, 0.025);
+  cursor: pointer;
+  text-align: left;
+}
+
+.book-viewer-settings fieldset button:hover,
+.book-viewer-settings fieldset button.is-active {
+  border-color: rgba(192, 147, 250, 0.42);
+  color: #f0e2ff;
+  background: rgba(169, 109, 238, 0.12);
+}
+
+.book-viewer-settings fieldset button > svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  color: #bd8ff5;
+}
+
+.book-viewer-settings fieldset button span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.book-viewer-settings fieldset button b {
+  font-size: 10px;
+}
+
+.book-viewer-settings fieldset button small {
+  overflow: hidden;
+  color: #897c94;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.book-viewer-settings-reverse {
+  transform: rotate(180deg);
+}
+
+.book-viewer-settings-error {
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #ffbdca;
+  background: rgba(232, 93, 128, 0.1);
+  font-size: 10px;
+}
+
+.book-viewer-settings.is-compact {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.book-viewer-settings .book-seek-anchor-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.book-viewer-setting-toggle,
+.book-viewer-setting-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 11px;
+  padding: 11px 13px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.book-viewer-setting-toggle > span,
+.book-viewer-setting-range > span {
+  display: grid;
+  gap: 4px;
+}
+
+.book-viewer-setting-toggle b,
+.book-viewer-setting-range b {
+  font-size: 10px;
+}
+
+.book-viewer-setting-toggle small,
+.book-viewer-setting-range small {
+  color: #897c94;
+  font-size: 8px;
+}
+
+.book-viewer-setting-toggle input {
+  width: 34px;
+  height: 18px;
+  accent-color: #aa6cf0;
+}
+
+.book-viewer-setting-range {
+  grid-template-columns: minmax(160px, 1fr) minmax(120px, .8fr) 34px;
+}
+
+.book-viewer-setting-range input {
+  width: 100%;
+  accent-color: #aa6cf0;
+}
+
+.book-viewer-setting-range output {
+  color: #d8bcfa;
+  font-size: 9px;
+  font-weight: 800;
+  text-align: right;
+}

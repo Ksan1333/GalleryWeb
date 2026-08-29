@@ -1,0 +1,76 @@
+name: Windows release gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-package:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Type-check and build frontend
+        run: npm run build
+
+      - name: Verify performance, themes and layout contract
+        run: |
+          npm run perf:budget
+          npm run test:performance
+          npm run test:themes
+          npm run test:layout
+
+      - name: Verify Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Run release tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --release
+
+      - name: Benchmark the thumbnail pipeline
+        run: |
+          npm run perf:thumbnails -- -Rounds 7 -BatchItems 32 -JsonPath artifacts/thumbnail-benchmark.json
+          npm run perf:thumbnails:check -- artifacts/thumbnail-benchmark.json
+
+      - name: Build NSIS installer
+        run: npm run build:installer
+
+      - name: Validate release metadata and installer
+        run: npm run release:check
+
+      - name: Upload installer and manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: pixvault-windows-${{ github.sha }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/release-manifest.json
+            artifacts/thumbnail-benchmark.json
+          if-no-files-found: error
+          retention-days: 14

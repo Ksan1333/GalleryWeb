@@ -1,0 +1,131 @@
+.viewer-control-settings {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, .07);
+  padding-top: 18px;
+}
+
+.viewer-control-settings > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.viewer-control-settings > header > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border-radius: 12px;
+  color: #d2adff;
+  background: rgba(169, 109, 238, .14);
+}
+
+.viewer-control-settings h3,
+.viewer-control-settings p {
+  margin: 0;
+}
+
+.viewer-control-settings h3 {
+  font-size: 14px;
+}
+
+.viewer-control-settings header p,
+.viewer-control-settings small {
+  margin-top: 4px;
+  color: #9589a1;
+  font-size: 9px;
+}
+
+.viewer-control-settings fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.viewer-control-settings legend {
+  margin-bottom: 9px;
+  color: #ad9bbb;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.viewer-control-slots {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.viewer-control-slots label,
+.viewer-control-behavior label {
+  display: grid;
+  gap: 6px;
+}
+
+.viewer-control-slots label > span {
+  color: #877a92;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.viewer-control-slots select,
+.viewer-control-behavior select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 9px;
+  padding: 0 9px;
+  color: #e9def4;
+  background: #1c1624;
+  font-size: 9px;
+}
+
+.viewer-control-behavior {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.viewer-control-behavior label {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 11px;
+  padding: 11px 13px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.viewer-control-behavior label > span {
+  display: grid;
+}
+
+.viewer-control-behavior b {
+  font-size: 10px;
+}
+
+.viewer-control-behavior input[type="checkbox"] {
+  width: 34px;
+  height: 18px;
+  accent-color: #aa6cf0;
+}
+
+.viewer-control-settings-error {
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #ffbdca;
+  background: rgba(232, 93, 128, .1);
+  font-size: 10px;
+}
+
+@media (max-width: 980px) {
+  .viewer-control-slots {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .viewer-control-behavior {
+    grid-template-columns: 1fr;
+  }
+}

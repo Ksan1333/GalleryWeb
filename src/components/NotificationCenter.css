@@ -1,0 +1,118 @@
+.notification-center { position: relative; }
+
+.notification-button span {
+  top: 3px;
+  right: 2px;
+  width: auto;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #17131d;
+  padding: 0 3px;
+  color: #170f20;
+  background: #c795ff;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.notification-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(390px, calc(100vw - 100px));
+  max-height: min(560px, calc(100vh - 90px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(187, 143, 247, .22);
+  border-radius: 17px;
+  color: #f2ebfa;
+  background: linear-gradient(145deg, rgba(31, 25, 41, .99), rgba(15, 13, 20, .99));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .48);
+  z-index: 1300;
+}
+
+.notification-panel > header {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px 10px 17px;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+}
+
+.notification-panel > header div { display: grid; gap: 2px; }
+.notification-panel > header small { color: #9685a6; font-size: 8px; font-weight: 850; letter-spacing: .15em; }
+.notification-panel > header strong { font-size: 15px; }
+.notification-panel > header button { border: 0; color: #aa9ab8; background: transparent; font-size: 10px; cursor: pointer; }
+.notification-panel > header button:hover { color: #eadcf8; }
+
+.notification-list {
+  min-height: 100px;
+  overflow: auto;
+  padding: 7px;
+  scrollbar-color: rgba(168, 116, 232, .42) transparent;
+  scrollbar-width: thin;
+}
+
+.notification-list article {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 28px;
+  align-items: start;
+  gap: 10px;
+  border-radius: 12px;
+  padding: 11px 7px 11px 10px;
+}
+.notification-list article + article { border-top: 1px solid rgba(255, 255, 255, .045); }
+.notification-list article > span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: #9ddeb9; background: rgba(80, 207, 143, .1); }
+.notification-list article.is-error > span { color: #ffaaaa; background: rgba(238, 91, 99, .1); }
+.notification-list article.is-info > span { color: #cfadfa; background: rgba(166, 105, 235, .1); }
+.notification-list article > span svg { width: 15px; height: 15px; }
+.notification-list article > div { min-width: 0; display: grid; gap: 4px; }
+.notification-list article strong { font-size: 12px; }
+.notification-list article p { margin: 0; color: #a99caf; font-size: 10px; line-height: 1.55; }
+.notification-list article small { color: #746c7c; font-size: 8px; }
+.notification-list article > button,
+.app-notification-toast > button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; color: #887e91; background: transparent; cursor: pointer; }
+.notification-list article > button:hover,
+.app-notification-toast > button:hover { color: #fff; background: rgba(255, 255, 255, .07); }
+.notification-list article > button svg,
+.app-notification-toast > button svg { width: 13px; height: 13px; }
+
+.notification-empty { min-height: 160px; display: grid; place-items: center; align-content: center; gap: 10px; color: #776d80; font-size: 11px; }
+.notification-empty svg { width: 25px; height: 25px; }
+
+.app-notification-toast {
+  position: fixed;
+  top: 76px;
+  right: 22px;
+  width: min(410px, calc(100vw - 44px));
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid rgba(109, 231, 177, .24);
+  border-radius: 15px;
+  padding: 11px 9px 11px 12px;
+  color: #f5effb;
+  background: linear-gradient(145deg, rgba(29, 25, 37, .98), rgba(14, 13, 18, .99));
+  box-shadow: 0 22px 64px rgba(0, 0, 0, .5);
+  z-index: 1350;
+  animation: notification-toast-in 180ms ease-out;
+}
+.app-notification-toast > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: #75e6af; background: rgba(71, 211, 143, .12); }
+.app-notification-toast.is-info > span { color: #d2b1fb; background: rgba(163, 102, 236, .12); }
+.app-notification-toast.is-error > span { color: #ffacad; background: rgba(238, 91, 99, .12); }
+.app-notification-toast > span svg { width: 17px; height: 17px; }
+.app-notification-toast > div { min-width: 0; display: grid; gap: 3px; }
+.app-notification-toast strong { font-size: 12px; }
+.app-notification-toast p { margin: 0; color: #a99daf; font-size: 10px; line-height: 1.45; }
+
+@keyframes notification-toast-in { from { opacity: 0; transform: translateY(-8px) scale(.98); } }
+
+@media (max-width: 700px) {
+  .notification-panel { position: fixed; top: 62px; right: 10px; width: calc(100vw - 96px); }
+  .app-notification-toast { right: 12px; width: calc(100vw - 100px); }
+}

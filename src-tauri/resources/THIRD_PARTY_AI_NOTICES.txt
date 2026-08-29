@@ -1,0 +1,44 @@
+PixVault for Windows - AI component notices
+=============================================
+
+WD v1.4 MOAT Tagger V2
+Repository: https://huggingface.co/SmilingWolf/wd-v1-4-moat-tagger-v2
+Pinned revision: 8452cddf280b952281b6e102411c50e981cb2908
+License: Apache License 2.0
+License text: https://www.apache.org/licenses/LICENSE-2.0
+
+The model is not embedded in the PixVault installer. When a user starts AI
+analysis for the first time, PixVault downloads model.onnx and
+selected_tags.csv from the pinned repository revision into the user's local
+application-data directory.
+
+Expected files:
+- model.onnx
+  Size: 326197340 bytes
+  SHA-256: b8cef913be4c9e8d93f9f903e74271416502ce0b4b04df0ff1e2f00df488aa03
+- selected_tags.csv
+  Size: 253906 bytes
+  SHA-256: 8c8750600db36233a1b274ac88bd46289e588b338218c2e4c62bbc9f2b516368
+
+MobileNetV3 Small 100 (ONNX Community export)
+Repository: https://huggingface.co/onnx-community/mobilenetv3_small_100.lamb_in1k
+Pinned revision: 4569847969d3038b642f3385c9e515272e90dde2
+Upstream architecture: https://huggingface.co/timm/mobilenetv3_small_100.lamb_in1k
+License: Apache License 2.0
+License text: https://www.apache.org/licenses/LICENSE-2.0
+
+The model is not embedded in the PixVault installer. PixVault downloads the
+pinned ONNX model into the user's local application-data directory when visual
+vector indexing first needs it.
+
+Expected file:
+- model.onnx
+  SHA-256: d36eea8c3298d339c232581dff18beed6651eacd607d0a531b7bdb100f8dc713
+
+ONNX Runtime
+Project: https://github.com/microsoft/onnxruntime
+License: MIT
+
+ort Rust bindings
+Project: https://github.com/pykeio/ort
+License: MIT OR Apache-2.0

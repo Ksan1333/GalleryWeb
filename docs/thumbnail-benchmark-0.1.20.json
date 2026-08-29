@@ -1,0 +1,142 @@
+{
+  "generatedAt": "unix-ms:1785605301317",
+  "operatingSystem": "windows",
+  "architecture": "x86_64",
+  "logicalCpus": 12,
+  "rounds": 7,
+  "foregroundWorkerLimit": 4,
+  "thumbnailEdge": 480,
+  "jpegQuality": 82,
+  "kinds": [
+    {
+      "kind": "image",
+      "sourceBytes": 198755,
+      "thumbnailBytes": 11649,
+      "cacheCold": {
+        "samples": 7,
+        "minimumMs": 30.0602,
+        "medianMs": 32.3641,
+        "p95Ms": 38.4062,
+        "maximumMs": 38.4062,
+        "meanMs": 33.441985714285714
+      },
+      "generatorWarmPathProbe": {
+        "samples": 7,
+        "minimumMs": 0.0224,
+        "medianMs": 0.026,
+        "p95Ms": 0.0787,
+        "maximumMs": 0.0787,
+        "meanMs": 0.03957142857142857
+      }
+    },
+    {
+      "kind": "gif",
+      "sourceBytes": 686809,
+      "thumbnailBytes": 22680,
+      "cacheCold": {
+        "samples": 7,
+        "minimumMs": 9.2403,
+        "medianMs": 10.1487,
+        "p95Ms": 11.373,
+        "maximumMs": 11.373,
+        "meanMs": 10.221157142857141
+      },
+      "generatorWarmPathProbe": {
+        "samples": 7,
+        "minimumMs": 0.0214,
+        "medianMs": 0.0249,
+        "p95Ms": 0.0316,
+        "maximumMs": 0.0316,
+        "meanMs": 0.026185714285714288
+      }
+    },
+    {
+      "kind": "video",
+      "sourceBytes": 140526,
+      "thumbnailBytes": 18374,
+      "cacheCold": {
+        "samples": 7,
+        "minimumMs": 20.209,
+        "medianMs": 21.2642,
+        "p95Ms": 22.6322,
+        "maximumMs": 22.6322,
+        "meanMs": 21.586214285714288
+      },
+      "generatorWarmPathProbe": {
+        "samples": 7,
+        "minimumMs": 0.0205,
+        "medianMs": 0.0235,
+        "p95Ms": 0.0387,
+        "maximumMs": 0.0387,
+        "meanMs": 0.025128571428571427
+      }
+    },
+    {
+      "kind": "zip",
+      "sourceBytes": 2834614,
+      "thumbnailBytes": 11649,
+      "cacheCold": {
+        "samples": 7,
+        "minimumMs": 36.619,
+        "medianMs": 87.1251,
+        "p95Ms": 102.0384,
+        "maximumMs": 102.0384,
+        "meanMs": 76.95870000000001
+      },
+      "generatorWarmPathProbe": {
+        "samples": 7,
+        "minimumMs": 0.025599999999999998,
+        "medianMs": 0.052899999999999996,
+        "p95Ms": 0.1125,
+        "maximumMs": 0.1125,
+        "meanMs": 0.05867142857142856
+      }
+    }
+  ],
+  "pipeline": {
+    "rootAndSourceCanonicalize": {
+      "samples": 280,
+      "minimumMs": 0.1237,
+      "medianMs": 0.28509999999999996,
+      "p95Ms": 0.4366,
+      "maximumMs": 0.7979,
+      "meanMs": 0.3144110714285711
+    },
+    "sqliteThumbnailSourceLookup": {
+      "samples": 280,
+      "minimumMs": 0.0135,
+      "medianMs": 0.020999999999999998,
+      "p95Ms": 0.0244,
+      "maximumMs": 0.2421,
+      "meanMs": 0.02366749999999998
+    },
+    "cachedFileProbe": {
+      "samples": 280,
+      "minimumMs": 0.045399999999999996,
+      "medianMs": 0.0797,
+      "p95Ms": 0.1075,
+      "maximumMs": 2.1536,
+      "meanMs": 0.09009464285714293
+    },
+    "resizeAndJpeg480": {
+      "samples": 7,
+      "minimumMs": 39.7818,
+      "medianMs": 42.7713,
+      "p95Ms": 53.4355,
+      "maximumMs": 53.4355,
+      "meanMs": 44.60944285714286
+    }
+  },
+  "sequentialBatch": {
+    "items": 16,
+    "workers": 1,
+    "elapsedMs": 1049.1739,
+    "itemsPerSecond": 15.250093430650534
+  },
+  "foregroundParallelBatch": {
+    "items": 16,
+    "workers": 4,
+    "elapsedMs": 370.9479,
+    "itemsPerSecond": 43.13274182169518
+  }
+}
