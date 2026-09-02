@@ -1,4 +1,12 @@
-# GalleryWeb
+# GalleryWeb / PixVault for Windows アプリ仕様書
+
+| 項目 | 内容 |
+| --- | --- |
+| 文書版 | 0.1.35 |
+| 対象アプリ | PixVault for Windows 0.1.35 |
+| 対象OS | Windows 10 / Windows 11（x64） |
+| 更新日 | 2026-09-02 |
+| 配布形式 | Tauri NSISセットアップEXE |
 
 GalleryWeb is the Windows 10/11 edition of the Android Gallery application
 (`PixVault`). It uses a React and TypeScript interface hosted by Tauri, with a
@@ -10,7 +18,6 @@ provided through a versioned migration archive rather than shared source code
 or direct access to Android's Room database.
 
 版ごとの追加機能と修正内容は[更新履歴](CHANGELOG.md)で確認できます。
-現在版の全体仕様は[アプリ仕様書 v0.1.35](docs/APP_SPECIFICATION_v0.1.35.md)を参照してください。
 
 ## インストールと起動（利用者向け）
 
