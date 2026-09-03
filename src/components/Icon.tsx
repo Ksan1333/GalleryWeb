@@ -16,6 +16,7 @@ export type IconName =
   | "minus"
   | "close"
   | "folder"
+  | "folderWindows"
   | "folderPlus"
   | "refresh"
   | "trash"
@@ -75,6 +76,7 @@ const paths: Record<IconName, ReactNode> = {
   minus: <path d="M5 12h14" />,
   close: <path d="m5 5 14 14M19 5 5 19" />,
   folder: <><path d="M3 6.5h6l2 2h10v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 10h18" /></>,
+  folderWindows: <><path className="folder-windows-back" d="M2.5 8.4V6.3a2 2 0 0 1 2-2h5.1l2 2.3h7.9a2 2 0 0 1 2 2v1.2Z" /><path className="folder-windows-front" d="M2.6 8.7h18.8l-1.3 9.4a2 2 0 0 1-2 1.7H4.9a2 2 0 0 1-2-1.8Z" /></>,
   folderPlus: <><path d="M3 6.5h6l2 2h10v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 10h18M12 13v5M9.5 15.5h5" /></>,
   refresh: <><path d="M20 7v5h-5" /><path d="M19 12a7 7 0 1 0-1.8 4.7" /></>,
   trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6" /></>,

@@ -37,7 +37,20 @@ export function normalizeGalleryDisplayPreferences(
   value: Partial<GalleryDisplayPreferences> | null | undefined,
 ): GalleryDisplayPreferences {
   const gridSize = value?.gridSize;
+  const groupMode = value?.groupMode;
   const sortOrder = value?.sortOrder;
+  const normalizedSortOrder: GallerySortOrder = sortOrder === "modified-asc"
+    || sortOrder === "name-asc"
+    || sortOrder === "name-desc"
+    || sortOrder === "size-desc"
+    || sortOrder === "size-asc"
+    ? sortOrder
+    : "modified-desc";
+  const normalizedGroupMode: GalleryGroupMode = groupMode === "day"
+    || groupMode === "month"
+    || groupMode === "year"
+    ? groupMode
+    : "none";
   return {
     gridSize: gridSize === "minimum"
       || gridSize === "small"
@@ -45,21 +58,33 @@ export function normalizeGalleryDisplayPreferences(
       || gridSize === "maximum"
       ? gridSize
       : "medium",
-    groupMode: "none",
+    groupMode: normalizedSortOrder.startsWith("modified-") ? normalizedGroupMode : "none",
     ageRating: value?.ageRating === "UNRATED"
       || value?.ageRating === "SFW"
       || value?.ageRating === "R15"
       || value?.ageRating === "R18"
       ? value.ageRating
       : "",
-    sortOrder: sortOrder === "modified-asc"
-      || sortOrder === "name-asc"
-      || sortOrder === "name-desc"
-      || sortOrder === "size-desc"
-      || sortOrder === "size-asc"
-      ? sortOrder
-      : "modified-desc",
+    sortOrder: normalizedSortOrder,
   };
+}
+
+export function mergeGalleryDisplayPreferences(
+  current: GalleryDisplayPreferences,
+  patch: Partial<GalleryDisplayPreferences>,
+): GalleryDisplayPreferences {
+  const adjusted = { ...current, ...patch };
+  if (
+    patch.groupMode
+    && patch.groupMode !== "none"
+    && !adjusted.sortOrder.startsWith("modified-")
+  ) {
+    adjusted.sortOrder = "modified-desc";
+  }
+  if (patch.sortOrder && !patch.sortOrder.startsWith("modified-")) {
+    adjusted.groupMode = "none";
+  }
+  return normalizeGalleryDisplayPreferences(adjusted);
 }
 
 export async function loadGalleryDisplayPreferences(): Promise<GalleryDisplayPreferences> {
@@ -103,6 +128,13 @@ const ratingOptions: Array<{ value: GalleryDisplayPreferences["ageRating"]; labe
   { value: "R18", label: "R-18" },
 ];
 
+export const galleryGroupOptions: Array<{ value: GalleryGroupMode; label: string }> = [
+  { value: "none", label: "なし" },
+  { value: "day", label: "更新日ごと" },
+  { value: "month", label: "更新月ごと" },
+  { value: "year", label: "更新年ごと" },
+];
+
 const sortOptions: Array<{ value: GallerySortOrder; label: string }> = [
   { value: "modified-desc", label: "更新 新→旧" },
   { value: "modified-asc", label: "更新 旧→新" },
@@ -127,8 +159,9 @@ export function GalleryDisplaySettings() {
     };
   }, []);
 
-  async function update(next: GalleryDisplayPreferences) {
+  async function update(patch: Partial<GalleryDisplayPreferences>) {
     const previous = preferences;
+    const next = mergeGalleryDisplayPreferences(previous, patch);
     setPreferences(next);
     setSaving(true);
     setError(undefined);
@@ -153,7 +186,24 @@ export function GalleryDisplaySettings() {
               aria-pressed={preferences.gridSize === option.value}
               disabled={saving}
               title={option.detail}
-              onClick={() => void update({ ...preferences, gridSize: option.value })}
+              onClick={() => void update({ gridSize: option.value })}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="gallery-display-setting-row">
+        <span><strong>グループ化</strong><small>Windowsエクスプローラーのように更新日単位の見出しで区切ります。</small></span>
+        <div className="gallery-display-segments">
+          {galleryGroupOptions.map((option) => (
+            <button
+              type="button"
+              key={option.value}
+              className={preferences.groupMode === option.value ? "active" : ""}
+              aria-pressed={preferences.groupMode === option.value}
+              disabled={saving}
+              onClick={() => void update({ groupMode: option.value })}
             >
               {option.label}
             </button>
@@ -170,7 +220,7 @@ export function GalleryDisplaySettings() {
               className={preferences.sortOrder === option.value ? "active" : ""}
               aria-pressed={preferences.sortOrder === option.value}
               disabled={saving}
-              onClick={() => void update({ ...preferences, sortOrder: option.value })}
+              onClick={() => void update({ sortOrder: option.value })}
             >
               {option.label}
             </button>
@@ -187,7 +237,7 @@ export function GalleryDisplaySettings() {
               className={preferences.ageRating === option.value ? "active" : ""}
               aria-pressed={preferences.ageRating === option.value}
               disabled={saving}
-              onClick={() => void update({ ...preferences, ageRating: option.value })}
+              onClick={() => void update({ ageRating: option.value })}
             >
               {option.label}
             </button>

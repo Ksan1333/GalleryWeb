@@ -87,8 +87,10 @@ import {
 import { openAiAnalysisPanel } from "../services/aiPanel";
 import {
   defaultGalleryDisplayPreferences,
+  galleryGroupOptions,
   galleryDisplayPreferencesEvent,
   loadGalleryDisplayPreferences,
+  mergeGalleryDisplayPreferences,
   normalizeGalleryDisplayPreferences,
   saveGalleryDisplayPreferences,
   type GalleryDisplayPreferences,
@@ -156,7 +158,6 @@ type FolderGroup = {
   name: string;
   displayPath: string;
   itemCount: number;
-  previewFolder: string;
   hasChildren: boolean;
 };
 
@@ -791,29 +792,6 @@ function PdfThumbnail({
 
 const nearViewportCallbacks = new WeakMap<Element, () => void>();
 let nearViewportObserver: IntersectionObserver | undefined;
-const folderPreviewRequests = new Map<string, Promise<MediaItem | undefined>>();
-const FOLDER_PREVIEW_CACHE_LIMIT = 480;
-
-function loadFolderPreview(folder: FolderGroup, kinds?: MediaKind[]): Promise<MediaItem | undefined> {
-  const key = `${folder.rootId}\u0000${folder.previewFolder}\u0000${(kinds ?? []).join("|")}`;
-  const cached = folderPreviewRequests.get(key);
-  if (cached) return cached;
-  const request = listMediaItems({
-    kind: kinds,
-    rootId: folder.rootId,
-    folderPath: folder.previewFolder,
-    sortBy: "modifiedAt",
-    sortDirection: "desc",
-    limit: 1,
-  }).then((result) => result.data[0]).catch(() => undefined);
-  folderPreviewRequests.set(key, request);
-  if (folderPreviewRequests.size > FOLDER_PREVIEW_CACHE_LIMIT) {
-    const oldest = folderPreviewRequests.keys().next().value;
-    if (oldest !== undefined) folderPreviewRequests.delete(oldest);
-  }
-  return request;
-}
-
 function observeNearViewport(element: Element, onVisible: () => void): () => void {
   if (!("IntersectionObserver" in window)) {
     onVisible();
@@ -913,43 +891,6 @@ export function LazyMediaVisual({
       {visible
         ? <QueuedMediaVisual item={item} onSettled={onSettled} thumbnailPriority={thumbnailPriority} />
         : <div className={`media-placeholder kind-${item.kind}`} aria-hidden="true"><Icon name={item.kind === "video" ? "video" : item.kind === "pdf" || item.kind === "archive" ? "book" : "image"} /></div>}
-    </div>
-  );
-}
-
-function FolderPreviewVisual({
-  folder,
-  kinds,
-}: {
-  folder: FolderGroup;
-  kinds?: MediaKind[];
-}) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-  const [preview, setPreview] = useState<MediaItem>();
-  const kindsKey = (kinds ?? []).join("|");
-
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host || visible) return;
-    return observeNearViewport(host, () => setVisible(true));
-  }, [visible]);
-
-  useEffect(() => {
-    setPreview(undefined);
-    if (!visible) return;
-    let active = true;
-    void loadFolderPreview(folder, kinds).then((item) => {
-      if (active) setPreview(item);
-    });
-    return () => { active = false; };
-  }, [folder.previewFolder, folder.rootId, kindsKey, visible]);
-
-  return (
-    <div ref={hostRef} className="lazy-media-visual">
-      {preview
-        ? <QueuedMediaVisual item={preview} />
-        : <div className="media-placeholder" aria-hidden="true"><Icon name="folder" /></div>}
     </div>
   );
 }
@@ -1221,7 +1162,6 @@ function directChildFolders(
       name: segment,
       displayPath: relativeFolder,
       itemCount: folder.itemCount,
-      previewFolder: folder.relativeFolder,
       hasChildren,
     });
   }
@@ -1448,7 +1388,7 @@ export function MediaCollection({
   const translateTag = useTagTranslations();
   const gridSize = compactFileLayout ? "minimum" : displayPreferences.gridSize;
   const { sortBy, sortDirection } = sortQuery(displayPreferences.sortOrder);
-  const groupMode: GalleryGroupMode = "none";
+  const groupMode: GalleryGroupMode = displayPreferences.groupMode;
 
   useEffect(() => {
     selectedMediaRef.current = selectedMedia;
@@ -1605,7 +1545,7 @@ export function MediaCollection({
     ...(advancedGallerySearch ? gallerySearchModifiedRange(galleryFilters) : {}),
     sortBy,
     sortDirection,
-    includeDateGroups: groupMode !== "none" && sortBy === "modifiedAt",
+    includeDateGroups: groupMode !== "none",
   }), [
     activeKinds, advancedGallerySearch, debouncedSearch, favoritesOnly,
     galleryFilters.ageRating, galleryFilters.customFrom, galleryFilters.customTo,
@@ -2067,7 +2007,6 @@ export function MediaCollection({
   const requestCatalogReload = useCallback(() => {
     cancelRangeSelection();
     invalidateMediaCatalogCache({ preserveThumbnails: true });
-    folderPreviewRequests.clear();
     setSelectedMedia(new Map());
     setSelectionMode(false);
     setSelectionAnchor(undefined);
@@ -2637,7 +2576,7 @@ export function MediaCollection({
     patch: Partial<GalleryDisplayPreferences>,
   ) => {
     const previous = displayPreferences;
-    const next = normalizeGalleryDisplayPreferences({ ...previous, ...patch });
+    const next = mergeGalleryDisplayPreferences(previous, patch);
     setDisplayPreferences(next);
     setContextMenu(undefined);
     const result = await saveGalleryDisplayPreferences(next);
@@ -2974,6 +2913,12 @@ export function MediaCollection({
             options={[{ value: "", label: "すべて" }, ...roots.map((root) => ({ value: root.id, label: root.displayName }))]}
           />
         )}
+        <StyledSelect
+          label="グループ化"
+          value={groupMode}
+          onChange={(value) => void updateDisplayPreferences({ groupMode: value as GalleryGroupMode })}
+          options={galleryGroupOptions}
+        />
       </div>
       {selectionMode && (
         <div className="gallery-bulk-toolbar" role="toolbar" aria-label="選択したメディアの一括操作">
@@ -3197,9 +3142,8 @@ export function MediaCollection({
                     type="button"
                     onClick={() => onOpenLeadingFolder?.(slot.folder)}
                   >
-                    <div className="folder-visual">
-                      <FolderPreviewVisual folder={slot.folder} kinds={kinds} />
-                      <span className="folder-overlay"><Icon name="folder" /></span>
+                    <div className="folder-visual explorer-folder-visual">
+                      <span className="explorer-folder-glyph"><Icon name="folderWindows" className="windows-folder-icon" /></span>
                       <span className="folder-item-count">{slot.folder.itemCount.toLocaleString("ja-JP")}</span>
                     </div>
                     <div>
@@ -3353,6 +3297,23 @@ export function MediaCollection({
               ))}
             </div>
           </section>}
+          <section>
+            <span>グループ化</span>
+            <div className="gallery-context-options">
+              {galleryGroupOptions.map((option) => (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={groupMode === option.value}
+                  className={groupMode === option.value ? "active" : ""}
+                  key={option.value}
+                  onClick={() => void updateDisplayPreferences({ groupMode: option.value })}
+                >
+                  {option.label}{groupMode === option.value && <Icon name="check" />}
+                </button>
+              ))}
+            </div>
+          </section>
           <section>
             <span>並び順</span>
             <div className="gallery-context-options">
@@ -3773,7 +3734,7 @@ export function FolderMediaCollection({
                 type="button"
                 onClick={() => void openFolderInExplorer(selectedRoot, location.path, setError)}
               >
-                <Icon name="folder" />エクスプローラー
+                <Icon name="folderWindows" className="windows-folder-icon" />エクスプローラー
               </button>
             )}
             {location && (
@@ -3822,7 +3783,7 @@ export function FolderMediaCollection({
                   {favoriteFolders.map(({ record, root }) => (
                     <article key={record.key}>
                       <button type="button" className="favorite-folder-open" onClick={() => visitLocation({ rootId: record.rootId, path: record.relativePath })}>
-                        <span><Icon name="folder" /></span>
+                        <span><Icon name="folderWindows" className="windows-folder-icon" /></span>
                         <span><strong>{record.displayName}</strong><small>{root.displayName}{record.relativePath ? ` / ${record.relativePath}` : " / ルート"}</small></span>
                         <em>{record.itemCount.toLocaleString("ja-JP")} 件</em>
                         <Icon name="chevronRight" />
@@ -3842,7 +3803,7 @@ export function FolderMediaCollection({
                   type="button"
                   onClick={() => visitLocation({ rootId: root.id, path: "" })}
                 >
-                  <span className="folder-root-icon"><Icon name="folder" /></span>
+                  <span className="folder-root-icon"><Icon name="folderWindows" className="windows-folder-icon" /></span>
                   <span className="root-folder-copy">
                     <strong>{root.displayName}</strong>
                     <span title={root.path}>{root.path}</span>
@@ -3879,7 +3840,7 @@ export function FolderMediaCollection({
           <section className={`folder-content-frame unified-folder-media-frame ${contentOpen ? "is-open" : "is-collapsed"}`}>
             <header className="folder-frame-header">
               <div>
-                <span className="folder-frame-icon"><Icon name="folder" /></span>
+                <span className="folder-frame-icon"><Icon name="folderWindows" className="windows-folder-icon" /></span>
                 <span>
                   <strong>フォルダとメディア</strong>
                   <small>フォルダ {childFolders.length.toLocaleString("ja-JP")} 件 · メディア {directCount.toLocaleString("ja-JP")} 件</small>
@@ -3891,7 +3852,7 @@ export function FolderMediaCollection({
                 aria-expanded={contentOpen}
                 onClick={() => setContentOpen((current) => !current)}
               >
-                <Icon name={contentOpen ? "minus" : "folder"} />
+                <Icon name={contentOpen ? "minus" : "folderWindows"} className={!contentOpen ? "windows-folder-icon" : undefined} />
               </button>
             </header>
             <div className="folder-unified-body mixed-folder-media-body" hidden={!contentOpen}>

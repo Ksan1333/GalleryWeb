@@ -1784,9 +1784,9 @@ button:disabled {
   width: 100%;
   align-items: center;
   gap: 10px;
-  border-bottom: 1px solid rgba(205, 173, 248, .13);
+  border-bottom: 1px solid rgba(205, 173, 248, .2);
   color: #eee5fa;
-  background: linear-gradient(90deg, rgba(167, 116, 233, .1), transparent 46%);
+  background: linear-gradient(90deg, rgba(167, 116, 233, .16), transparent 56%);
 }
 .virtual-date-header strong {
   font-size: 13px;
@@ -2312,6 +2312,19 @@ button:disabled {
 .folder-visual > img, .folder-visual > video, .folder-visual > iframe, .folder-visual .media-placeholder { width: 100%; height: 100%; }
 .folder-visual > img, .folder-visual > video { object-fit: cover; opacity: .64; }
 .folder-visual .media-placeholder { display: grid; place-items: center; }
+.windows-folder-icon .folder-windows-back { fill: #f6c64f; stroke: #d49b24; }
+.windows-folder-icon .folder-windows-front { fill: #ffd86a; stroke: #d49b24; }
+.explorer-folder-visual {
+  background: linear-gradient(180deg, rgba(255, 216, 106, .06), rgba(0, 0, 0, .18));
+}
+.explorer-folder-glyph {
+  display: grid;
+  width: 58%;
+  max-width: 92px;
+  place-items: center;
+  filter: drop-shadow(0 8px 12px rgba(0, 0, 0, .28));
+}
+.explorer-folder-glyph svg { width: 100%; height: auto; }
 .folder-overlay { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(250,245,255,.92); text-shadow: 0 5px 16px rgba(0,0,0,.7); }
 .folder-overlay svg { width: 43px; height: 43px; fill: rgba(21,14,30,.28); }
 .folder-item-count { position: absolute; right: 9px; bottom: 9px; border: 1px solid rgba(255,255,255,.18); border-radius: 7px; padding: 3px 7px; color: #f6f0ff; background: rgba(14,11,20,.76); font-size: 10px; font-weight: 800; }
@@ -2482,8 +2495,8 @@ button:disabled {
   height: 50px;
   place-items: center;
   border-radius: 14px;
-  color: #d7bdf8;
-  background: linear-gradient(145deg, rgba(183,127,248,.22), rgba(103,65,151,.13));
+  color: #e1a62f;
+  background: linear-gradient(145deg, rgba(255,216,106,.16), rgba(118,78,19,.12));
 }
 .root-folder-main .folder-root-icon { display: grid; }
 .folder-root-icon svg { width: 25px; height: 25px; }
