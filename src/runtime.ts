@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { APP_VERSION } from "./appVersion";
 
 export type RuntimeInfo = {
   appName: string;
@@ -11,7 +12,7 @@ export type RuntimeInfo = {
 
 const browserFallback: RuntimeInfo = {
   appName: "PixVault for Windows",
-  appVersion: "0.1.23",
+  appVersion: APP_VERSION,
   os: "browser preview",
   arch: "web",
   databaseSchemaVersion: 8,

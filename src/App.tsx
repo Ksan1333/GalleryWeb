@@ -392,6 +392,11 @@ function App() {
     };
   }, [navigateBack, navigateForward]);
 
+  const publishCatalogChange = useCallback(() => {
+    invalidateMediaCatalogCache();
+    setCatalogRefreshVersion((current) => current + 1);
+  }, []);
+
   const refresh = useCallback(async (showOperation = true): Promise<string | undefined> => {
     const operation = showOperation
       ? startOperation({
@@ -598,6 +603,7 @@ function App() {
         detail: "メディアを初回スキャンしています",
       });
       const scanResult = await scanLibrary(added.data.id);
+      if (!scanResult.error) publishCatalogChange();
       const refreshError = await refresh(false);
       const finalError = scanResult.error ?? refreshError;
       if (finalError) {
@@ -629,6 +635,7 @@ function App() {
     setBusy(true);
     try {
       const result = await scanLibrary(rootId);
+      if (!result.error) publishCatalogChange();
       const refreshError = await refresh(false);
       const finalError = result.error ?? refreshError;
       if (finalError) {
@@ -659,6 +666,7 @@ function App() {
     setBusy(true);
     try {
       const result = await removeLibraryRoot(root.id);
+      if (result.data && !result.error) publishCatalogChange();
       const refreshError = await refresh(false);
       const finalError =
         result.error ??
@@ -887,7 +895,10 @@ function App() {
         <DataPortabilitySettings
           nativeAvailable={nativeAvailable}
           migrationFormatVersion={runtimeInfo?.migrationFormatVersion ?? 1}
-          onDataChanged={() => void refresh()}
+          onDataChanged={() => {
+            publishCatalogChange();
+            void refresh();
+          }}
         />
       </div>
     );
@@ -1005,7 +1016,7 @@ function App() {
           <div className="topbar-actions">
             <button className="topbar-add-button" type="button" onClick={() => void addFolder()} disabled={busy || !nativeAvailable}><Icon name="folderPlus" /><span>フォルダーを追加</span></button>
             <NotificationCenter />
-            <button className="icon-button" type="button" aria-label="ライブラリを再読み込み" onClick={() => void refresh()} disabled={loading || busy}><Icon name="refresh" /></button>
+            <button className="icon-button" type="button" aria-label="すべてのフォルダーを再スキャン" title="すべてのフォルダーを再スキャン" onClick={() => void scan()} disabled={loading || busy || !nativeAvailable || roots.length === 0}><Icon name="refresh" className={busy ? "rotating" : undefined} /></button>
           </div>
         </header>
         <Suspense fallback={<div className="empty-panel"><span className="spinner" /><p>読み込み中…</p></div>}>{content()}</Suspense>

@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { APP_VERSION } from "../appVersion";
 
 export type MediaKind =
   | "image"
@@ -407,7 +408,7 @@ export type InAppBrowserAction = "back" | "forward" | "reload";
 
 const emptyRuntimeInfo: RuntimeInfo = {
   appName: "PixVault for Windows",
-  appVersion: "0.1.32",
+  appVersion: APP_VERSION,
   os: "browser preview",
   arch: "web",
   databaseSchemaVersion: 8,

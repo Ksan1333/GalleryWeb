@@ -11,6 +11,8 @@ const viewer = read("src/components/MediaViewer.tsx");
 const videoSettings = read("src/components/VideoViewerSettings.tsx");
 const viewerCss = read("src/components/MediaViewer.css");
 const thumbnails = read("src/services/thumbnailCoordinator.ts");
+const nativeBridge = read("src/services/native.ts");
+const runtime = read("src/runtime.ts");
 const native = read("src-tauri/src/lib.rs");
 const watcher = read("src-tauri/src/folder_watcher.rs");
 
@@ -19,6 +21,8 @@ const checks = [
   [app.includes("const ReleaseHistory = lazy("), "release history is loaded only on demand"],
   [app.includes("scheduleDeferredUi") && app.includes("backgroundUiReady"), "ancillary startup UI waits for an idle period"],
   [!app.includes("key={`images:${catalogRefreshVersion}`"), "watch updates do not remount the image folder browser"],
+  [app.includes("const publishCatalogChange = useCallback") && app.includes('aria-label="すべてのフォルダーを再スキャン"') && app.includes("onClick={() => void scan()}"), "manual library refresh rescans folders and publishes a catalog change"],
+  [nativeBridge.includes("appVersion: APP_VERSION") && runtime.includes("appVersion: APP_VERSION"), "renderer fallback version follows package metadata"],
   [collection.includes("const MEDIA_PAGE_SIZE = 64"), "gallery IPC pages cover a compact visible range"],
   [collection.includes("viewerIncludesAllMedia") && viewer.includes("ensureCollectionRange") && viewer.includes("VIEWER_COLLECTION_CACHE_MAX_ITEMS = 1_280"), "all-media viewer rail pages the complete gallery without retaining the whole catalog"],
   [collection.includes("scheduleRetry") && collection.includes("MEDIA_PAGE_SHORT_RESULT_RELOAD_ATTEMPTS"), "missing gallery pages retry and resynchronize instead of remaining blank"],
