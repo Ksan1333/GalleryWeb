@@ -394,7 +394,7 @@ pub fn list_media_items(
          LEFT JOIN media_metadata mm ON mm.media_id = m.id
          WHERE ",
     );
-    let (filter_sql, mut values) = build_media_filter(&query)?;
+    let (filter_sql, mut values) = build_media_filter(state, &query)?;
     sql.push_str(&filter_sql);
     let sort_column = match query.sort_by.as_deref() {
         Some("name") => "m.file_name COLLATE NOCASE",
@@ -466,7 +466,7 @@ pub(crate) fn list_similarity_candidates(
     query.offset = None;
     query.kinds = vec!["image".to_owned(), "gif".to_owned()];
     query.kind = None;
-    let (filter_sql, values) = build_media_filter(&query)?;
+    let (filter_sql, values) = build_media_filter(state, &query)?;
     let sql = format!(
         "SELECT m.id
          FROM media_items m
@@ -595,7 +595,7 @@ pub fn get_media_page_info(
     query: Option<MediaQuery>,
 ) -> Result<MediaPageInfo, String> {
     let query = query.unwrap_or_default();
-    let (filter_sql, values) = build_media_filter(&query)?;
+    let (filter_sql, values) = build_media_filter(state, &query)?;
     let connection = state.database.lock()?;
 
     let total_count = connection
@@ -656,9 +656,63 @@ pub fn get_media_page_info(
     })
 }
 
-fn build_media_filter(query: &MediaQuery) -> Result<(String, Vec<SqlValue>), String> {
+fn priority_root_ids(roots: &[LibraryRootRecord]) -> Vec<String> {
+    fn normalized_path(path: &str) -> String {
+        let value = path.replace('\\', "/").to_lowercase();
+        let value = if let Some(unc) = value.strip_prefix("//?/unc/") {
+            format!("//{unc}")
+        } else {
+            value.strip_prefix("//?/").unwrap_or(&value).to_owned()
+        };
+        value.trim_end_matches('/').to_owned()
+    }
+
+    let roots = roots
+        .iter()
+        .filter(|root| root.enabled)
+        .map(|root| (root, normalized_path(&root.path)))
+        .collect::<Vec<_>>();
+    let priorities = roots
+        .iter()
+        .filter(|(root, _)| root.is_priority)
+        .map(|(_, path)| path.as_str())
+        .collect::<Vec<_>>();
+    roots
+        .iter()
+        .filter(|(_, path)| {
+            priorities.iter().any(|parent| {
+                path.as_str() == *parent
+                    || path
+                        .strip_prefix(*parent)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            })
+        })
+        .map(|(root, _)| root.id.clone())
+        .collect()
+}
+
+fn build_media_filter(
+    state: &AppState,
+    query: &MediaQuery,
+) -> Result<(String, Vec<SqlValue>), String> {
     let mut conditions = vec!["r.enabled = 1".to_owned()];
     let mut values: Vec<SqlValue> = Vec::new();
+
+    if query.priority_only {
+        // Resolve ancestry once over roots, not once per media row. The root
+        // query releases its DB mutex before callers acquire theirs below.
+        // A single JSON parameter also avoids SQLite's bound-variable limit
+        // for libraries with many independently browsed folder scopes.
+        let root_ids = priority_root_ids(&get_root_records(state, None)?);
+        if root_ids.is_empty() {
+            conditions.push("0".to_owned());
+        } else {
+            conditions.push("m.root_id IN (SELECT value FROM json_each(?))".to_owned());
+            values.push(SqlValue::Text(serde_json::to_string(&root_ids).map_err(
+                |error| format!("Failed to encode priority folders: {error}"),
+            )?));
+        }
+    }
 
     if let Some(root_id) = query
         .root_id
@@ -2503,6 +2557,267 @@ mod tests {
 
     fn initialized_state() -> AppState {
         AppState::in_memory().expect("in-memory state")
+    }
+
+    fn priority_gallery_fixture() -> AppState {
+        let state = initialized_state();
+        {
+            let connection = state.database.lock().unwrap();
+            for (id, path, priority, enabled) in [
+                ("parent", r"C:\Library\Pictures", Some(true), true),
+                (
+                    "child",
+                    r"\\?\c:\library\pictures\Nested",
+                    Some(false),
+                    true,
+                ),
+                ("prefix", r"C:\Library\Pictures-other", Some(false), true),
+                ("other", r"D:\Downloads", Some(false), true),
+                ("legacy", r"C:\Legacy", None, true),
+                ("disabled", r"C:\Disabled", Some(true), false),
+                ("disabled-child", r"C:\Disabled\Child", Some(false), true),
+            ] {
+                connection.execute(
+                    "INSERT INTO library_roots(id, path, display_name, enabled, created_at, updated_at)
+                     VALUES (?1, ?2, ?1, ?3, 1, 1)",
+                    params![id, path, enabled],
+                ).unwrap();
+                if let Some(priority) = priority {
+                    connection.execute(
+                        "INSERT INTO preferences(key, value_json, updated_at) VALUES (?1, ?2, 1)",
+                        params![format!("folder.priority.{id}"), priority.to_string()],
+                    ).unwrap();
+                }
+            }
+            for (id, root, name, kind, modified) in [
+                (
+                    "parent-one",
+                    "parent",
+                    "a.jpg",
+                    "image",
+                    1_700_000_000_000_i64,
+                ),
+                ("child-one", "child", "b.gif", "gif", 1_700_086_400_000),
+                ("parent-two", "parent", "c.mp4", "video", 1_700_172_800_000),
+                ("prefix-one", "prefix", "d.jpg", "image", 1_700_000_000_000),
+                ("other-one", "other", "e.jpg", "image", 1_700_086_400_000),
+                ("legacy-one", "legacy", "f.jpg", "image", 1_700_172_800_000),
+                (
+                    "disabled-one",
+                    "disabled",
+                    "g.jpg",
+                    "image",
+                    1_700_000_000_000,
+                ),
+                (
+                    "disabled-child-one",
+                    "disabled-child",
+                    "h.jpg",
+                    "image",
+                    1_700_000_000_000,
+                ),
+            ] {
+                connection.execute(
+                    "INSERT INTO media_items(id, root_id, relative_path, file_name, extension, media_kind,
+                        mime_type, byte_size, modified_at, first_seen_at, last_seen_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?3, ?4, ?5, 'application/octet-stream', 1, ?6, 1, 1, 1)",
+                    params![id, root, name, name.rsplit('.').next().unwrap(), kind, modified],
+                ).unwrap();
+            }
+        }
+        state
+    }
+
+    fn priority_gallery_query() -> MediaQuery {
+        MediaQuery {
+            priority_only: true,
+            sort_by: Some("name".to_owned()),
+            sort_direction: Some("asc".to_owned()),
+            ..MediaQuery::default()
+        }
+    }
+
+    #[test]
+    fn priority_filter_is_opt_in_and_includes_descendants_but_not_similar_prefixes() {
+        let state = priority_gallery_fixture();
+        let ordinary = list_media_items(&state, None).unwrap();
+        assert_eq!(ordinary.len(), 7);
+        let visible = list_media_items(&state, Some(priority_gallery_query())).unwrap();
+        assert_eq!(
+            visible
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["parent-one", "child-one", "parent-two", "legacy-one"]
+        );
+        assert!(ordinary.iter().any(|item| item.id == "other-one"));
+        assert!(ordinary.iter().any(|item| item.id == "prefix-one"));
+        assert!(ordinary.iter().any(|item| item.id == "disabled-child-one"));
+    }
+
+    #[test]
+    fn priority_changes_apply_immediately_without_removing_catalog_or_favorites() {
+        let state = priority_gallery_fixture();
+        set_favorite(&state, "parent-one", true).unwrap();
+        set_root_priority(&state, "legacy", false).unwrap();
+        set_root_priority(&state, "parent", false).unwrap();
+        let query = MediaQuery {
+            include_date_groups: true,
+            ..priority_gallery_query()
+        };
+        assert!(
+            list_media_items(&state, Some(query.clone()))
+                .unwrap()
+                .is_empty()
+        );
+        let empty = get_media_page_info(&state, Some(query.clone())).unwrap();
+        assert_eq!(empty.total_count, 0);
+        assert!(empty.date_groups.is_empty());
+        assert_eq!(list_media_items(&state, None).unwrap().len(), 7);
+        assert!(
+            list_media_items(&state, None)
+                .unwrap()
+                .iter()
+                .any(|item| item.id == "parent-one" && item.is_favorite)
+        );
+
+        set_root_priority(&state, "child", true).unwrap();
+        let child = list_media_items(&state, Some(query.clone())).unwrap();
+        assert_eq!(child.len(), 1);
+        assert_eq!(child[0].id, "child-one");
+        set_root_priority(&state, "parent", true).unwrap();
+        assert_eq!(
+            get_media_page_info(&state, Some(query))
+                .unwrap()
+                .total_count,
+            3
+        );
+        assert_eq!(list_media_items(&state, None).unwrap().len(), 7);
+    }
+
+    #[test]
+    fn priority_paging_counts_date_groups_and_candidate_positions_use_one_scope() {
+        let state = priority_gallery_fixture();
+        let query = MediaQuery {
+            kinds: vec!["image".to_owned(), "gif".to_owned()],
+            include_date_groups: true,
+            ..priority_gallery_query()
+        };
+        let expected = list_media_items(&state, Some(query.clone())).unwrap();
+        let info = get_media_page_info(&state, Some(query.clone())).unwrap();
+        assert_eq!(info.total_count, 3);
+        assert_eq!(info.date_groups.len(), 3);
+        assert_eq!(
+            info.date_groups
+                .iter()
+                .map(|group| group.item_count)
+                .sum::<u64>(),
+            3
+        );
+        let mut paged_ids = Vec::new();
+        for offset in 0..info.total_count as u32 {
+            let page = list_media_items(
+                &state,
+                Some(MediaQuery {
+                    offset: Some(offset),
+                    limit: Some(1),
+                    ..query.clone()
+                }),
+            )
+            .unwrap();
+            assert_eq!(page.len(), 1);
+            assert_eq!(page[0].id, expected[offset as usize].id);
+            paged_ids.push(page[0].id.clone());
+        }
+        assert_eq!(paged_ids, vec!["parent-one", "child-one", "legacy-one"]);
+        let candidates = list_similarity_candidates(&state, Some(query.clone())).unwrap();
+        assert_eq!(
+            candidates.iter().map(|item| &item.id).collect::<Vec<_>>(),
+            paged_ids.iter().collect::<Vec<_>>()
+        );
+        assert!(
+            list_media_items(
+                &state,
+                Some(MediaQuery {
+                    root_id: Some("other".to_owned()),
+                    ..query.clone()
+                })
+            )
+            .unwrap()
+            .is_empty()
+        );
+        assert_eq!(
+            get_media_page_info(
+                &state,
+                Some(MediaQuery {
+                    priority_only: false,
+                    ..query
+                })
+            )
+            .unwrap()
+            .total_count,
+            6
+        );
+    }
+
+    #[test]
+    fn priority_root_path_matching_handles_drives_unc_and_separator_boundaries() {
+        let roots = [
+            ("drive", r"\\?\C:\", true),
+            ("drive-child", r"c:/Photos", false),
+            ("other-drive", r"D:\Photos", false),
+            ("unc", r"\\?\UNC\Server\Share\Pictures\", true),
+            ("unc-child", r"\\server\share\pictures\child", false),
+            ("unc-prefix", r"\\server\share\pictures-other", false),
+        ]
+        .into_iter()
+        .map(|(id, path, is_priority)| LibraryRootRecord {
+            id: id.to_owned(),
+            path: path.to_owned(),
+            display_name: id.to_owned(),
+            enabled: true,
+            is_priority,
+        })
+        .collect::<Vec<_>>();
+        assert_eq!(
+            priority_root_ids(&roots),
+            vec!["drive", "drive-child", "unc", "unc-child"]
+        );
+    }
+
+    #[test]
+    fn priority_filter_uses_one_uncorrelated_root_set_parameter() {
+        let state = priority_gallery_fixture();
+        let (filter, values) = build_media_filter(&state, &priority_gallery_query()).unwrap();
+        assert_eq!(values.len(), 1);
+        assert!(filter.contains("m.root_id IN (SELECT value FROM json_each(?))"));
+        let connection = state.database.lock().unwrap();
+        let mut statement = connection
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN SELECT m.id FROM media_items m
+             JOIN library_roots r ON r.id = m.root_id WHERE {filter}"
+            ))
+            .unwrap();
+        let plan = statement
+            .query_map(params_from_iter(values), |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            !plan
+                .iter()
+                .any(|step| step.to_uppercase().contains("CORRELATED")),
+            "{plan:?}"
+        );
+    }
+
+    #[test]
+    fn media_query_priority_only_deserializes_and_defaults_to_false() {
+        let query: MediaQuery = serde_json::from_value(json!({ "priorityOnly": true })).unwrap();
+        assert!(query.priority_only);
+        let ordinary: MediaQuery = serde_json::from_value(json!({})).unwrap();
+        assert!(!ordinary.priority_only);
+        assert!(!MediaQuery::default().priority_only);
     }
 
     #[test]

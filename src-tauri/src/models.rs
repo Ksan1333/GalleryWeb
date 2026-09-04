@@ -60,6 +60,7 @@ pub struct MediaQuery {
     pub modified_from: Option<i64>,
     pub modified_before: Option<i64>,
     pub favorite_only: bool,
+    pub priority_only: bool,
     pub include_missing: bool,
     pub sort_by: Option<String>,
     pub sort_direction: Option<String>,

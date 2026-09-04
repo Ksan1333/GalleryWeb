@@ -161,6 +161,8 @@ export type Tag = {
 export type MediaQuery = {
   kind?: MediaKind | MediaKind[];
   favoritesOnly?: boolean;
+  /** Restrict to priority folders and catalog roots beneath them. */
+  priorityOnly?: boolean;
   search?: string;
   rootId?: string;
   /** Undefined includes a whole root; an empty string means the root itself. */
@@ -1661,6 +1663,7 @@ function nativeMediaQuery(query: MediaQuery): Record<string, unknown> {
     modifiedFrom: query.modifiedFrom,
     modifiedBefore: query.modifiedBefore,
     favoriteOnly: Boolean(query.favoritesOnly),
+    priorityOnly: Boolean(query.priorityOnly),
     includeMissing: false,
     sortBy: query.sortBy,
     sortDirection: query.sortDirection,
@@ -1682,6 +1685,7 @@ export async function listMediaItems(
     mediaPageCache.set(cacheKey, cached);
     return cached.result;
   }
+  const generation = catalogOverviewGeneration;
   const result = await call<unknown>(
     "list_media_items",
     { query: nativeMediaQuery(query) },
@@ -1700,7 +1704,9 @@ export async function listMediaItems(
     available: result.available,
     error: result.error,
   };
-  return normalized.error ? normalized : rememberPage(cacheKey, normalized);
+  return normalized.error || generation !== catalogOverviewGeneration
+    ? normalized
+    : rememberPage(cacheKey, normalized);
 }
 
 export async function getVisualRecommendations(
@@ -1794,6 +1800,7 @@ export async function getMediaPageInfo(
     mediaInfoCache.set(cacheKey, cached);
     return cached.result;
   }
+  const generation = catalogOverviewGeneration;
   const result = await call<unknown>(
     "get_media_page_info",
     { query: nativeMediaQuery(infoQuery) },
@@ -1814,7 +1821,7 @@ export async function getMediaPageInfo(
     available: result.available,
     error: result.error,
   };
-  if (!normalized.error) {
+  if (!normalized.error && generation === catalogOverviewGeneration) {
     rememberMediaInfo(cacheKey, normalized);
   }
   return normalized;

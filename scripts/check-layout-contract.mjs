@@ -32,7 +32,7 @@ const contracts = [
   [mediaCollection.includes('navigationKey === "images" || navigationKey === "videos" || navigationKey === "books"'), "image, video, and book folders use compact media tiles"],
   [app.indexOf('id: "gallery"') < app.indexOf('id: "allFolders"') && app.indexOf('id: "allFolders"') < app.indexOf('id: "favorites"'), "all-media folder navigation sits between gallery and favorites"],
   [app.includes("<FileSystemBrowser") && folderActivity.includes('"all" | "images"'), "all-folder navigation uses the on-demand filesystem browser"],
-  [app.includes('section === "gallery"') && app.includes("kinds={galleryMediaKinds} compactFileLayout"), "main gallery uses the same compact layout as folder media galleries"],
+  [/section === "gallery"[^;]*kinds=\{galleryMediaKinds\}[^;]*\bcompactFileLayout\b/.test(app), "main gallery uses the same compact layout as folder media galleries"],
   [appCss.includes(".compact-file-gallery .root-folder-card"), "image, video, and book root folders use compact rows"],
   [mediaCollection.includes('name="folderWindows"') && appCss.includes(".folder-windows-front"), "folder browsers use an Explorer-style two-tone folder icon"],
   [mediaCollection.includes('"--gallery-visual-size"') && appCss.includes("aspect-ratio: 1"), "gallery thumbnails use a square visual frame"],

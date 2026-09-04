@@ -121,6 +121,7 @@ type MediaCollectionProps = {
   description: string;
   kinds?: MediaKind[];
   favoritesOnly?: boolean;
+  priorityOnly?: boolean;
   showFavoriteKindFilter?: boolean;
   advancedGallerySearch?: boolean;
   viewerIncludesAllMedia?: boolean;
@@ -1324,7 +1325,7 @@ const MediaCard = memo(function MediaCard({
 
 export function MediaCollection({
   eyebrow, title, description, kinds, favoritesOnly, showFavoriteKindFilter, emptyTitle, emptyDescription,
-  advancedGallerySearch = false, viewerIncludesAllMedia = false,
+  advancedGallerySearch = false, viewerIncludesAllMedia = false, priorityOnly = false,
   initialSearch = "", initialRootId, initialFolderPath, embedded = false,
   compactFileLayout = false, onBack,
   onNavigateFolderPath, leadingFolders = [], showLeadingFolderCounts = true, onOpenLeadingFolder, favoriteFolderKeys,
@@ -1542,6 +1543,7 @@ export function MediaCollection({
   const baseQuery = useMemo<MediaQuery>(() => ({
     kind: activeKinds,
     favoritesOnly,
+    priorityOnly,
     search: debouncedSearch || undefined,
     rootId: (initialRootId ?? rootId) || undefined,
     folderPath: initialFolderPath !== undefined
@@ -1558,7 +1560,7 @@ export function MediaCollection({
     sortDirection,
     includeDateGroups: groupMode !== "none",
   }), [
-    activeKinds, advancedGallerySearch, debouncedSearch, favoritesOnly,
+    activeKinds, advancedGallerySearch, debouncedSearch, favoritesOnly, priorityOnly,
     galleryFilters.ageRating, galleryFilters.customFrom, galleryFilters.customTo,
     galleryFilters.folderPath, galleryFilters.period, galleryFilters.tagIds,
     displayPreferences.ageRating, groupMode, initialFolderPath, initialRootId, rootId, sortBy, sortDirection,

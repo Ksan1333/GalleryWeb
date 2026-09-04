@@ -4,7 +4,11 @@ import { Icon } from "./Icon";
 import { MediaCollection } from "./MediaCollection";
 import "./FileSystemBrowser.css";
 
-export function FileSystemBrowser({ refreshVersion, onDataChanged }: { refreshVersion: number; onDataChanged: () => void }) {
+export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityChanged }: {
+  refreshVersion: number;
+  onDataChanged: () => void;
+  onPriorityChanged?: () => void;
+}) {
   const [path, setPath] = useState<string>();
   const [address, setAddress] = useState("");
   const [listing, setListing] = useState<FileSystemListing | null>(null);
@@ -71,6 +75,8 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged }: { refreshVe
     try {
       const result = await addLibraryRoot(listing.path);
       if (result.error || !result.data) throw new Error(result.error ?? "優先フォルダーを指定できませんでした。");
+      // The priority setting has already changed even if the following scan fails.
+      (onPriorityChanged ?? onChanged.current)();
       const scan = await scanLibrary(result.data.id);
       if (scan.error) throw new Error(scan.error);
       await load();
@@ -80,7 +86,11 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged }: { refreshVe
   async function removePriority(root: LibraryRoot) {
     setPriorityBusy(true);
     const result = await setFolderPriority(root.id, false);
-    if (result.error) setError(result.error); else await load(false);
+    if (result.error) setError(result.error);
+    else {
+      (onPriorityChanged ?? onChanged.current)();
+      await load(false);
+    }
     setPriorityBusy(false);
   }
   return <div className="page filesystem-browser">

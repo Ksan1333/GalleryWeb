@@ -448,6 +448,11 @@ function App() {
     setNativeAvailable((current) => current && result.available);
   }, []);
 
+  const refreshPriorityScope = useCallback(() => {
+    publishCatalogChange();
+    void refreshSummary();
+  }, [publishCatalogChange, refreshSummary]);
+
   useEffect(() => {
     if (!nativeAvailable) return;
     let disposed = false;
@@ -604,6 +609,7 @@ function App() {
         return;
       }
 
+      publishCatalogChange();
       operation.update({
         label: `${added.data.displayName}を追加`,
         detail: "メディアを初回スキャンしています",
@@ -944,8 +950,8 @@ function App() {
 
   function content() {
     if (section === "home") return home();
-    if (section === "gallery") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="GALLERY" title="ギャラリー" description="画像・GIFを中心に、設定で動画・ブックもまとめて確認できます。" kinds={galleryMediaKinds} compactFileLayout advancedGallerySearch viewerIncludesAllMedia tagNavigation={tagGalleryNavigation} emptyTitle="メディアはまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
-    if (section === "allFolders") return <FileSystemBrowser refreshVersion={catalogRefreshVersion} onDataChanged={refreshSummary} />;
+    if (section === "gallery") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="GALLERY" title="ギャラリー" description="優先フォルダー配下のメディアだけを表示します。動画・ブックの表示は設定で変更できます。" kinds={galleryMediaKinds} priorityOnly compactFileLayout advancedGallerySearch viewerIncludesAllMedia tagNavigation={tagGalleryNavigation} emptyTitle="優先フォルダーのメディアはまだありません" emptyDescription="全フォルダーで優先読み込みに追加するか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
+    if (section === "allFolders") return <FileSystemBrowser refreshVersion={catalogRefreshVersion} onDataChanged={refreshSummary} onPriorityChanged={refreshPriorityScope} />;
     if (section === "folders") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="images" eyebrow="IMAGES" title="画像" description="画像とGIFだけを、元のフォルダー構成ごとに表示します。" kinds={IMAGE_MEDIA_KINDS} emptyTitle="画像フォルダーはまだありません" emptyDescription="全フォルダーから画像やGIFのある場所を開いてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "videos") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="videos" eyebrow="VIDEOS" title="動画" description="動画をフォルダー単位で整理して表示します。" kinds={VIDEO_MEDIA_KINDS} emptyTitle="動画はまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "books") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="books" eyebrow="BOOKS" title="ブック" description="PDFとZIP/CBZをフォルダー単位で整理して表示します。" kinds={BOOK_MEDIA_KINDS} emptyTitle="ブックはまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
