@@ -4,6 +4,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -629,6 +630,12 @@ function CachedMediaVisual({
         onError={handleSourceError}
       />
     );
+  }
+
+  // Nearby tiles may prefetch native thumbnails, but a miss must not launch
+  // dozens of full-size images, video decoders or PDF renderers offscreen.
+  if (thumbnailPriority !== "visible") {
+    return <SettledMediaPlaceholder item={item} onSettled={onSettled} />;
   }
 
   if (item.kind === "archive") {
@@ -1961,6 +1968,10 @@ export function MediaCollection({
     }
     return { itemByIndex: indexed, mediaIndexById: indexesById, loadedItems: loaded };
   }, [pages]);
+  const itemByIndexRef = useRef(itemByIndex);
+  useLayoutEffect(() => {
+    itemByIndexRef.current = itemByIndex;
+  }, [itemByIndex]);
   const thumbnailPrefetchTargets = useMemo<ThumbnailPrefetchTarget[]>(() => {
     const viewportTop = viewport.scrollTop;
     const viewportBottom = viewportTop + viewport.height;
@@ -2132,6 +2143,9 @@ export function MediaCollection({
     itemIndex: number,
     event: ReactMouseEvent<HTMLButtonElement>,
   ) => {
+    // Keep card handlers stable when another page arrives, while range
+    // selection reads the most recently committed set of loaded items.
+    const indexedItems = itemByIndexRef.current;
     if (event.shiftKey) {
       if (!selectionAnchor) {
         cancelRangeSelection();
@@ -2150,7 +2164,7 @@ export function MediaCollection({
       const rangeTotal = rangeEnd - rangeStart + 1;
       const rangeItemIds = new Set<string>();
       const immediatelyAvailable: MediaItem[] = [];
-      for (const [index, loadedItem] of itemByIndex) {
+      for (const [index, loadedItem] of indexedItems) {
         if (index < rangeStart || index > rangeEnd) continue;
         immediatelyAvailable.push(loadedItem);
         rangeItemIds.add(loadedItem.id);
@@ -2182,7 +2196,7 @@ export function MediaCollection({
         const limit = Math.min(RANGE_SELECTION_BATCH_SIZE, rangeEnd - offset + 1);
         let complete = true;
         for (let index = offset; index < offset + limit; index += 1) {
-          if (!itemByIndex.has(index)) {
+          if (!indexedItems.has(index)) {
             complete = false;
             break;
           }
@@ -2276,7 +2290,7 @@ export function MediaCollection({
     } else if (selectionAnchor?.mediaId === item.id) {
       setSelectionAnchor(undefined);
     }
-  }, [baseQuery, cancelRangeSelection, itemByIndex, selectionAnchor]);
+  }, [baseQuery, cancelRangeSelection, selectionAnchor]);
 
   const activateItem = useCallback((
     item: MediaItem,

@@ -98,8 +98,43 @@ struct ThumbnailPathIndex {
     ready: bool,
 }
 
+impl ThumbnailPathIndex {
+    fn publish_snapshot(&mut self, directory: &Path, mut file_names: HashSet<String>, ready: bool) {
+        if self.directory.as_deref() != Some(directory) {
+            return;
+        }
+        // Visible requests can publish or invalidate files while the manifest
+        // is read or the directory is enumerated. Neither snapshot may undo
+        // those changes; retain the overlay until reconciliation finishes.
+        file_names.extend(self.added_during_scan.iter().cloned());
+        for removed in &self.removed_during_scan {
+            file_names.remove(removed);
+        }
+        self.file_names = file_names;
+        if ready {
+            self.added_during_scan.clear();
+            self.removed_during_scan.clear();
+            self.initializing = false;
+            self.ready = true;
+        }
+    }
+}
+
 static THUMBNAIL_PATH_INDEX: OnceLock<RwLock<ThumbnailPathIndex>> = OnceLock::new();
 static THUMBNAIL_MANIFEST_WRITE: OnceLock<Mutex<()>> = OnceLock::new();
+
+/// Keep database mutex waits, SQLite work, and filesystem probes off the IPC
+/// dispatcher and async executor. Callers obtain the managed AppState inside
+/// this worker, retaining the existing connection instead of reopening the DB.
+async fn run_catalog_worker<T: Send + 'static>(
+    operation: &'static str,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    background_activity::note_foreground_activity();
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("{operation} worker failed: {error}"))?
+}
 
 #[derive(Clone)]
 struct MediaPresenceCandidate {
@@ -1679,10 +1714,7 @@ fn schedule_thumbnail_path_index(directory: PathBuf) {
         };
         if state.directory.as_deref() != Some(directory.as_path()) {
             state.directory = Some(directory.clone());
-            // A compact manifest makes existing thumbnails available to the
-            // first gallery query. The slower directory reconciliation below
-            // runs independently and repairs stale manifest entries.
-            state.file_names = load_thumbnail_index_manifest(&directory);
+            state.file_names.clear();
             state.added_during_scan.clear();
             state.removed_during_scan.clear();
             state.initializing = false;
@@ -1700,6 +1732,16 @@ fn schedule_thumbnail_path_index(directory: PathBuf) {
     }
 
     tauri::async_runtime::spawn_blocking(move || {
+        // Disk reads and JSON parsing must not delay application setup or hold
+        // the shared index lock. Until published, visible requests use the
+        // existing per-file lookup fallback instead of waiting for the index.
+        let manifest = load_thumbnail_index_manifest(&directory);
+        if let Ok(mut state) = THUMBNAIL_PATH_INDEX
+            .get_or_init(|| RwLock::new(ThumbnailPathIndex::default()))
+            .write()
+        {
+            state.publish_snapshot(&directory, manifest, false);
+        }
         let mut discovered = HashSet::new();
         if let Ok(entries) = fs::read_dir(&directory) {
             for (index, entry) in entries.flatten().enumerate() {
@@ -1725,15 +1767,8 @@ fn schedule_thumbnail_path_index(directory: PathBuf) {
         if let Ok(mut state) = THUMBNAIL_PATH_INDEX
             .get_or_init(|| RwLock::new(ThumbnailPathIndex::default()))
             .write()
-            && state.directory.as_deref() == Some(directory.as_path())
         {
-            discovered.extend(state.added_during_scan.drain());
-            for removed in state.removed_during_scan.drain() {
-                discovered.remove(&removed);
-            }
-            state.file_names = discovered;
-            state.initializing = false;
-            state.ready = true;
+            state.publish_snapshot(&directory, discovered, true);
         }
         if let Err(error) = persist_thumbnail_index_manifest(&directory) {
             eprintln!("Thumbnail index manifest update skipped: {error}");
@@ -2275,71 +2310,67 @@ fn generate_thumbnail_batch(
 #[tauri::command]
 async fn get_media_thumbnails(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
     media_ids: Vec<String>,
 ) -> Result<Vec<MediaThumbnailResult>, String> {
-    background_activity::note_foreground_activity();
-    let requested_ids = media_ids.into_iter().take(512).collect::<Vec<_>>();
-    let records = resolve_thumbnail_sources(&state, &requested_ids)?;
-    let mut generated =
-        tauri::async_runtime::spawn_blocking(move || generate_thumbnail_batch(app, records))
-            .await
-            .map_err(|error| format!("Thumbnail batch worker failed: {error}"))?;
-    generated.sort_by_key(|(index, _, _)| *index);
-    for (_, result, unavailable) in &generated {
-        if *unavailable {
-            let _ = catalog::reconcile_media_load_failure(&state, &result.media_id);
+    run_catalog_worker("Thumbnail batch", move || {
+        let state = app.state::<AppState>();
+        let requested_ids = media_ids.into_iter().take(512).collect::<Vec<_>>();
+        let records = resolve_thumbnail_sources(&state, &requested_ids)?;
+        let mut generated = generate_thumbnail_batch(app.clone(), records);
+        generated.sort_by_key(|(index, _, _)| *index);
+        for (_, result, unavailable) in &generated {
+            if *unavailable {
+                let _ = catalog::reconcile_media_load_failure(&state, &result.media_id);
+            }
         }
-    }
-    let mut by_id = generated
-        .into_iter()
-        .map(|(_, result, _)| (result.media_id.clone(), result))
-        .collect::<HashMap<_, _>>();
-    let mut seen = HashSet::new();
-    Ok(requested_ids
-        .into_iter()
-        .filter(|media_id| seen.insert(media_id.clone()))
-        .map(|media_id| {
-            by_id.remove(&media_id).unwrap_or(MediaThumbnailResult {
-                media_id,
-                thumbnail_path: None,
+        let mut by_id = generated
+            .into_iter()
+            .map(|(_, result, _)| (result.media_id.clone(), result))
+            .collect::<HashMap<_, _>>();
+        let mut seen = HashSet::new();
+        Ok(requested_ids
+            .into_iter()
+            .filter(|media_id| seen.insert(media_id.clone()))
+            .map(|media_id| {
+                by_id.remove(&media_id).unwrap_or(MediaThumbnailResult {
+                    media_id,
+                    thumbnail_path: None,
+                })
             })
-        })
-        .collect())
+            .collect())
+    })
+    .await
 }
 
 #[tauri::command]
 async fn get_media_thumbnail(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
     media_id: String,
 ) -> Result<Option<String>, String> {
-    background_activity::note_foreground_activity();
-    let Some(record) = resolve_thumbnail_sources(&state, std::slice::from_ref(&media_id))?
-        .into_iter()
-        .next()
-    else {
-        return Ok(None);
-    };
-    let worker_media_id = media_id.clone();
-    let (thumbnail, source_unavailable) = tauri::async_runtime::spawn_blocking(move || {
-        get_or_generate_media_thumbnail(
+    run_catalog_worker("Thumbnail", move || {
+        let state = app.state::<AppState>();
+        let Some(record) = resolve_thumbnail_sources(&state, std::slice::from_ref(&media_id))?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let (thumbnail, source_unavailable) = get_or_generate_media_thumbnail(
             &app,
-            &worker_media_id,
+            &media_id,
             &record.kind,
             record.modified_at,
             record.byte_size,
             Path::new(&record.root),
             &record.relative,
             ThumbnailWorkPriority::Foreground,
-        )
+        )?;
+        if source_unavailable {
+            let _ = catalog::reconcile_media_load_failure(&state, &media_id);
+        }
+        Ok(thumbnail)
     })
     .await
-    .map_err(|error| format!("Thumbnail worker failed: {error}"))??;
-    if source_unavailable {
-        let _ = catalog::reconcile_media_load_failure(&state, &media_id);
-    }
-    Ok(thumbnail)
 }
 
 #[tauri::command]
@@ -3563,9 +3594,11 @@ fn add_library_root(
 }
 
 #[tauri::command]
-fn list_library_roots(state: State<'_, AppState>) -> Result<Vec<LibraryRoot>, String> {
-    background_activity::note_foreground_activity();
-    catalog::list_library_roots(&state)
+async fn list_library_roots(app: tauri::AppHandle) -> Result<Vec<LibraryRoot>, String> {
+    run_catalog_worker("Library roots", move || {
+        catalog::list_library_roots(&app.state::<AppState>())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3701,26 +3734,30 @@ async fn scan_library(
 }
 
 #[tauri::command]
-fn get_library_summary(state: State<'_, AppState>) -> Result<LibrarySummary, String> {
-    background_activity::note_foreground_activity();
-    catalog::get_library_summary(&state)
+async fn get_library_summary(app: tauri::AppHandle) -> Result<LibrarySummary, String> {
+    run_catalog_worker("Library summary", move || {
+        catalog::get_library_summary(&app.state::<AppState>())
+    })
+    .await
 }
 
 #[tauri::command]
-fn list_media_items(
+async fn list_media_items(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
     query: Option<MediaQuery>,
 ) -> Result<Vec<MediaItem>, String> {
-    background_activity::note_foreground_activity();
-    let mut media_items = catalog::list_media_items(&state, query)?;
-    let known_missing =
-        schedule_media_presence_validation(state.database.path().to_owned(), &media_items);
-    if !known_missing.is_empty() {
-        media_items.retain(|item| !known_missing.contains(&item.id));
-    }
-    attach_existing_thumbnail_paths(&app, &mut media_items)?;
-    Ok(media_items)
+    run_catalog_worker("Media list", move || {
+        let state = app.state::<AppState>();
+        let mut media_items = catalog::list_media_items(&state, query)?;
+        let known_missing =
+            schedule_media_presence_validation(state.database.path().to_owned(), &media_items);
+        if !known_missing.is_empty() {
+            media_items.retain(|item| !known_missing.contains(&item.id));
+        }
+        attach_existing_thumbnail_paths(&app, &mut media_items)?;
+        Ok(media_items)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3813,12 +3850,14 @@ fn get_media_items_by_ids(
 }
 
 #[tauri::command]
-fn get_media_page_info(
-    state: State<'_, AppState>,
+async fn get_media_page_info(
+    app: tauri::AppHandle,
     query: Option<MediaQuery>,
 ) -> Result<models::MediaPageInfo, String> {
-    background_activity::note_foreground_activity();
-    catalog::get_media_page_info(&state, query)
+    run_catalog_worker("Media page info", move || {
+        catalog::get_media_page_info(&app.state::<AppState>(), query)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -4143,6 +4182,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            background_activity::note_foreground_activity();
             let data_directory = app.path().app_local_data_dir().map_err(|error| {
                 std::io::Error::other(format!(
                     "Failed to resolve application data directory: {error}"
@@ -4494,12 +4534,86 @@ mod thumbnail_tests {
 
     use super::{
         STARTUP_DIAGNOSTIC_DELAY, STARTUP_DIAGNOSTIC_POLL_INTERVAL,
-        STARTUP_DIAGNOSTIC_QUIET_PERIOD, ThumbnailPrecacheCursor, ThumbnailPrecachePhase,
-        cleanup_reference_cache_files, copy_temporary_reference, decode_image_data_url,
-        decode_jpeg_thumbnail, is_web_reference, legacy_media_thumbnail_path, media_thumbnail_path,
-        native_thumbnail_foreground_limit, prune_thumbnail_cache, thumbnail_cache_usage,
+        STARTUP_DIAGNOSTIC_QUIET_PERIOD, ThumbnailPathIndex, ThumbnailPrecacheCursor,
+        ThumbnailPrecachePhase, cleanup_reference_cache_files, copy_temporary_reference,
+        decode_image_data_url, decode_jpeg_thumbnail, is_web_reference,
+        legacy_media_thumbnail_path, media_thumbnail_path, native_thumbnail_foreground_limit,
+        prune_thumbnail_cache, run_catalog_worker, thumbnail_cache_usage,
         validate_reference_cache_key,
     };
+
+    #[test]
+    fn catalog_work_runs_off_the_calling_thread_and_preserves_errors() {
+        let caller = std::thread::current().id();
+        let worker = tauri::async_runtime::block_on(run_catalog_worker("test", || {
+            Ok(std::thread::current().id())
+        }))
+        .expect("worker result");
+        assert_ne!(caller, worker);
+        let error = tauri::async_runtime::block_on(run_catalog_worker::<()>("test", || {
+            Err("original catalog failure".to_owned())
+        }))
+        .unwrap_err();
+        assert_eq!(error, "original catalog failure");
+    }
+
+    #[test]
+    fn index_snapshots_preserve_visible_changes_during_manifest_and_directory_reads() {
+        let directory = std::path::Path::new("thumbnail-fixture");
+        let mut index = ThumbnailPathIndex {
+            directory: Some(directory.to_owned()),
+            initializing: true,
+            ..ThumbnailPathIndex::default()
+        };
+        index.added_during_scan.insert("new.jpg".to_owned());
+        index.removed_during_scan.insert("deleted.jpg".to_owned());
+        index.publish_snapshot(
+            directory,
+            ["cached.jpg".to_owned(), "deleted.jpg".to_owned()].into(),
+            false,
+        );
+        assert_eq!(
+            index.file_names,
+            ["cached.jpg".to_owned(), "new.jpg".to_owned()].into()
+        );
+        assert!(index.initializing);
+        assert!(!index.ready);
+        assert!(index.added_during_scan.contains("new.jpg"));
+        assert!(index.removed_during_scan.contains("deleted.jpg"));
+
+        index.publish_snapshot(
+            directory,
+            ["cached.jpg".to_owned(), "deleted.jpg".to_owned()].into(),
+            true,
+        );
+        assert_eq!(
+            index.file_names,
+            ["cached.jpg".to_owned(), "new.jpg".to_owned()].into()
+        );
+        assert!(index.ready);
+        assert!(!index.initializing);
+        assert!(index.added_during_scan.is_empty());
+        assert!(index.removed_during_scan.is_empty());
+    }
+
+    #[test]
+    fn outdated_index_worker_cannot_replace_a_different_directory() {
+        let directory = std::path::Path::new("current-thumbnails");
+        let mut index = ThumbnailPathIndex {
+            directory: Some(directory.to_owned()),
+            file_names: ["current.jpg".to_owned()].into(),
+            initializing: true,
+            ..ThumbnailPathIndex::default()
+        };
+        index.publish_snapshot(
+            std::path::Path::new("old-thumbnails"),
+            Default::default(),
+            true,
+        );
+        assert_eq!(index.file_names, ["current.jpg".to_owned()].into());
+        assert!(!index.ready);
+        assert!(index.initializing);
+    }
 
     #[test]
     fn accepts_a_jpeg_data_url_for_thumbnail_cache() {

@@ -1,7 +1,7 @@
 {
   "name": "galleryweb",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "scripts": {
     "dev": "vite --configLoader runner",
@@ -14,6 +14,9 @@
     "test:themes": "node scripts/check-theme-contrast.mjs",
     "test:layout": "node scripts/check-layout-contract.mjs",
     "test:filesystem-layout": "node scripts/test-filesystem-layout.mjs",
+    "test:startup-performance": "node scripts/test-startup-performance.mjs",
+    "test:thumbnail-coordinator": "node --test scripts/test-thumbnail-coordinator.mjs",
+    "test:media-visual-admission": "node --test scripts/test-media-visual-admission.mjs",
     "test:library": "node --test scripts/test-library-workflow.mjs",
     "build:installer": "tauri build --bundles nsis",
     "release:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\check-release-artifacts.ps1",

@@ -29,7 +29,53 @@ function kindLabel(item: MediaItem): string {
   return "画像";
 }
 
+const shelfVisibilityCallbacks = new WeakMap<Element, () => void>();
+let shelfVisibilityObserver: IntersectionObserver | undefined;
+
+function observeShelfVisual(element: Element, onVisible: () => void): () => void {
+  if (!("IntersectionObserver" in window)) {
+    onVisible();
+    return () => undefined;
+  }
+  shelfVisibilityObserver ??= new IntersectionObserver((entries, observer) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const callback = shelfVisibilityCallbacks.get(entry.target);
+      observer.unobserve(entry.target);
+      shelfVisibilityCallbacks.delete(entry.target);
+      callback?.();
+    }
+  });
+  shelfVisibilityCallbacks.set(element, onVisible);
+  shelfVisibilityObserver.observe(element);
+  return () => {
+    shelfVisibilityObserver?.unobserve(element);
+    shelfVisibilityCallbacks.delete(element);
+  };
+}
+
+function HomeMediaPlaceholder({ item }: { item: MediaItem }) {
+  return <span className={`home-media-placeholder kind-${item.kind}`} aria-hidden="true">
+    <Icon name={item.kind === "video" ? "video" : item.kind === "pdf" || item.kind === "archive" ? "book" : "image"} />
+  </span>;
+}
+
 function HomeMediaVisual({ item }: { item: MediaItem }) {
+  const hostRef = useRef<HTMLSpanElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(markFirstMediaCard, []);
+  useEffect(() => {
+    if (!hostRef.current || visible) return;
+    return observeShelfVisual(hostRef.current, () => setVisible(true));
+  }, [visible]);
+  // Keep an admitted visual mounted on return, but never request all 24
+  // horizontal-shelf thumbnails before the user scrolls them into view.
+  return <span className="home-media-visual" ref={hostRef}>
+    {visible ? <LoadedHomeMediaVisual item={item} /> : <HomeMediaPlaceholder item={item} />}
+  </span>;
+}
+
+function LoadedHomeMediaVisual({ item }: { item: MediaItem }) {
   const thumbnail = useCoordinatedThumbnail(
     item.id,
     item.modifiedAt,
@@ -38,8 +84,6 @@ function HomeMediaVisual({ item }: { item: MediaItem }) {
   );
   const source = localAssetUrl(item.thumbnailPath ?? thumbnail.path);
   const [failedSource, setFailedSource] = useState<string>();
-
-  useEffect(markFirstMediaCard, []);
 
   useEffect(() => {
     setFailedSource(undefined);
@@ -60,11 +104,7 @@ function HomeMediaVisual({ item }: { item: MediaItem }) {
       />
     );
   }
-  return (
-    <span className={`home-media-placeholder kind-${item.kind}`} aria-hidden="true">
-      <Icon name={item.kind === "video" ? "video" : item.kind === "pdf" || item.kind === "archive" ? "book" : "image"} />
-    </span>
-  );
+  return <HomeMediaPlaceholder item={item} />;
 }
 
 function EmptyShelf({ icon, children }: { icon: "star" | "folder" | "clock"; children: string }) {
@@ -109,17 +149,7 @@ function FolderPreview({ folder }: { folder: FolderActivityRecord }) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host || visible) return;
-    if (!("IntersectionObserver" in window)) {
-      setVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      setVisible(true);
-      observer.disconnect();
-    }, { rootMargin: "180px" });
-    observer.observe(host);
-    return () => observer.disconnect();
+    return observeShelfVisual(host, () => setVisible(true));
   }, [visible]);
 
   useEffect(() => {

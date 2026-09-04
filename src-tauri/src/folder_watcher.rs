@@ -17,7 +17,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{ai, catalog, db::AppState, media_folders};
+use crate::{ai, background_activity, catalog, db::AppState, media_folders};
 
 pub const LIBRARY_WATCH_EVENT: &str = "library-watch-updated";
 const PENDING_ANALYSIS_KEY: &str = "watcher.pendingAnalysisIds";
@@ -26,6 +26,10 @@ const CONTROL_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const AUTO_ANALYSIS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const AUTO_ANALYSIS_BATCH: usize = 64;
 const WATCH_EVENT_BUFFER: usize = 1_024;
+const RECONCILIATION_START_DELAY: Duration = Duration::from_secs(8);
+const RECONCILIATION_QUIET_PERIOD: Duration = Duration::from_secs(2);
+const RECONCILIATION_MAX_DELAY: Duration = Duration::from_secs(30);
+const RECONCILIATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WatchedRoot {
@@ -88,8 +92,11 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
     let mut preferences = preference_flags(&state);
     let mut watched_roots = HashMap::<String, WatchedRoot>::new();
     let mut pending_changes = HashMap::<String, PendingRootChange>::new();
-    // None means a full reconciliation (startup, reconnect, overflow).
+    // None means a full reconciliation requested by a notification/overflow.
     let mut pending_paths = HashMap::<String, Option<HashSet<PathBuf>>>::new();
+    // Startup/reconnect baselines are independent of real notifications. A
+    // create/delete arriving during the grace period stays incremental.
+    let mut pending_reconciliations = HashMap::<String, Instant>::new();
     let mut pending_analysis = load_pending_analysis(&state);
     let mut active_auto_analysis: Option<ActiveAutoAnalysis> = None;
     let mut retry_auto_after = Instant::now();
@@ -107,6 +114,7 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
                 &mut watched_roots,
                 &mut pending_changes,
                 &mut pending_paths,
+                &mut pending_reconciliations,
             );
             next_control_refresh = now + CONTROL_REFRESH_INTERVAL;
         }
@@ -153,6 +161,9 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
                     .remove(&root_id)
                     .flatten()
                     .map(|paths| paths.into_iter().collect::<Vec<_>>());
+                if paths.is_none() {
+                    pending_reconciliations.remove(&root_id);
+                }
                 scan_changed_root(
                     &app,
                     &state,
@@ -165,11 +176,29 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
             }
         }
 
+        if let Some(root_id) = take_due_reconciliation(
+            &mut pending_reconciliations,
+            &watched_roots,
+            Instant::now(),
+            background_activity::is_foreground_active(RECONCILIATION_QUIET_PERIOD),
+        ) {
+            scan_changed_root(
+                &app,
+                &state,
+                &root_id,
+                true,
+                preferences,
+                &mut pending_analysis,
+                None,
+            );
+        }
+
         let timeout = next_wake_timeout(
             Instant::now(),
             next_control_refresh,
             next_analysis_poll,
             &pending_changes,
+            &pending_reconciliations,
         );
         match event_receiver.recv_timeout(timeout) {
             Ok(Ok(event)) => {
@@ -228,10 +257,12 @@ fn sync_watched_roots(
     watched_roots: &mut HashMap<String, WatchedRoot>,
     pending_changes: &mut HashMap<String, PendingRootChange>,
     pending_paths: &mut HashMap<String, Option<HashSet<PathBuf>>>,
+    pending_reconciliations: &mut HashMap<String, Instant>,
 ) {
     if !watch_folders {
         unwatch_all(watcher, watched_roots, pending_changes);
         pending_paths.clear();
+        pending_reconciliations.clear();
         return;
     }
 
@@ -332,8 +363,9 @@ fn sync_watched_roots(
             },
         ) {
             Ok(()) => {
-                record_root_change(pending_changes, root.id.clone(), Instant::now(), true);
-                pending_paths.insert(root.id.clone(), None);
+                pending_reconciliations
+                    .entry(root.id.clone())
+                    .or_insert_with(Instant::now);
                 watched_roots.insert(root_id, root);
             }
             Err(error) => eprintln!(
@@ -344,6 +376,8 @@ fn sync_watched_roots(
     }
     pending_changes.retain(|root_id, _| watched_roots.values().any(|root| &root.id == root_id));
     pending_paths.retain(|root_id, _| pending_changes.contains_key(root_id));
+    pending_reconciliations
+        .retain(|root_id, _| watched_roots.values().any(|root| &root.id == root_id));
 }
 
 fn unwatch_all(
@@ -407,7 +441,7 @@ fn event_changes_folder_hierarchy(event: &Event) -> bool {
 
 fn roots_for_event(event: &Event, watched_roots: &HashMap<String, WatchedRoot>) -> HashSet<String> {
     if event.need_rescan() || (event.paths.is_empty() && matches!(event.kind, EventKind::Other)) {
-        return watched_roots.keys().cloned().collect();
+        return watched_roots.values().map(|root| root.id.clone()).collect();
     }
     event
         .paths
@@ -498,6 +532,7 @@ fn next_wake_timeout(
     next_control_refresh: Instant,
     next_analysis_poll: Instant,
     pending_changes: &HashMap<String, PendingRootChange>,
+    pending_reconciliations: &HashMap<String, Instant>,
 ) -> Duration {
     let mut next_wake = next_control_refresh.min(next_analysis_poll);
     if let Some(change_wake) = pending_changes
@@ -507,7 +542,46 @@ fn next_wake_timeout(
     {
         next_wake = next_wake.min(change_wake);
     }
+    if let Some(reconcile_wake) = pending_reconciliations
+        .values()
+        .map(|queued_at| {
+            (*queued_at + RECONCILIATION_START_DELAY).max(now + RECONCILIATION_POLL_INTERVAL)
+        })
+        .min()
+    {
+        // Once eligible, poll instead of retaining a deadline in the past;
+        // foreground interaction must not turn an idle wait into a busy loop.
+        next_wake = next_wake.min(reconcile_wake);
+    }
     next_wake.saturating_duration_since(now)
+}
+
+fn take_due_reconciliation(
+    pending: &mut HashMap<String, Instant>,
+    watched_roots: &HashMap<String, WatchedRoot>,
+    now: Instant,
+    foreground_active: bool,
+) -> Option<String> {
+    let root_id = pending
+        .iter()
+        .filter(|(root_id, queued_at)| {
+            let age = now.saturating_duration_since(**queued_at);
+            watched_roots.values().any(|root| &root.id == *root_id)
+                && age >= RECONCILIATION_START_DELAY
+                && (!foreground_active || age >= RECONCILIATION_MAX_DELAY)
+        })
+        .min_by_key(|(root_id, queued_at)| {
+            (
+                !watched_roots
+                    .values()
+                    .any(|root| &root.id == *root_id && root.recursive),
+                **queued_at,
+                (*root_id).clone(),
+            )
+        })
+        .map(|(root_id, _)| root_id.clone())?;
+    pending.remove(&root_id);
+    Some(root_id)
 }
 
 fn scan_changed_root(
@@ -704,6 +778,149 @@ fn update_active_auto_analysis(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reconciliation_test_roots() -> HashMap<String, WatchedRoot> {
+        HashMap::from([(
+            "root".to_owned(),
+            WatchedRoot {
+                id: "root".to_owned(),
+                path: PathBuf::from("fixture"),
+                recursive: true,
+            },
+        )])
+    }
+
+    #[test]
+    fn initial_reconciliation_waits_for_startup_and_idle_but_cannot_starve() {
+        let started = Instant::now();
+        let roots = reconciliation_test_roots();
+        let mut pending = HashMap::from([("root".to_owned(), started)]);
+        assert_eq!(
+            take_due_reconciliation(&mut pending, &roots, started, false),
+            None
+        );
+        assert_eq!(
+            take_due_reconciliation(
+                &mut pending,
+                &roots,
+                started + RECONCILIATION_START_DELAY,
+                true
+            ),
+            None
+        );
+        assert!(pending.contains_key("root"));
+        assert_eq!(
+            take_due_reconciliation(
+                &mut pending,
+                &roots,
+                started + RECONCILIATION_START_DELAY,
+                false
+            ),
+            Some("root".to_owned())
+        );
+        assert!(pending.is_empty());
+        pending.insert("root".to_owned(), started);
+        assert_eq!(
+            take_due_reconciliation(
+                &mut pending,
+                &roots,
+                started + RECONCILIATION_MAX_DELAY,
+                true
+            ),
+            Some("root".to_owned())
+        );
+    }
+
+    #[test]
+    fn live_changes_remain_prompt_while_initial_reconciliation_is_deferred() {
+        let started = Instant::now();
+        let roots = reconciliation_test_roots();
+        let mut baseline = HashMap::from([("root".to_owned(), started)]);
+        let mut changes = HashMap::new();
+        record_root_change(&mut changes, "root".to_owned(), started, false);
+        let now = started + CHANGE_STABILITY_DELAY;
+        assert_eq!(
+            take_stable_root_changes(&mut changes, &roots, now),
+            vec![("root".to_owned(), false)]
+        );
+        assert_eq!(
+            take_due_reconciliation(&mut baseline, &roots, now, true),
+            None
+        );
+        assert!(baseline.contains_key("root"));
+    }
+
+    #[test]
+    fn deferred_reconciliation_does_not_busy_poll_or_include_unwatched_roots() {
+        let started = Instant::now();
+        let now = started + RECONCILIATION_START_DELAY;
+        let mut baseline = HashMap::from([("root".to_owned(), started)]);
+        let timeout = next_wake_timeout(
+            now,
+            now + CONTROL_REFRESH_INTERVAL,
+            now + AUTO_ANALYSIS_POLL_INTERVAL,
+            &HashMap::new(),
+            &baseline,
+        );
+        assert_eq!(timeout, RECONCILIATION_POLL_INTERVAL);
+        assert_eq!(
+            take_due_reconciliation(&mut baseline, &HashMap::new(), now, false),
+            None
+        );
+    }
+
+    #[test]
+    fn deferred_reconciliation_takes_only_one_root_and_prioritizes_recursive_roots() {
+        let started = Instant::now();
+        let mut roots = reconciliation_test_roots();
+        roots.insert(
+            "other".to_owned(),
+            WatchedRoot {
+                id: "other".to_owned(),
+                path: PathBuf::from("other"),
+                recursive: false,
+            },
+        );
+        let mut baseline =
+            HashMap::from([("root".to_owned(), started), ("other".to_owned(), started)]);
+        assert_eq!(
+            take_due_reconciliation(
+                &mut baseline,
+                &roots,
+                started + RECONCILIATION_START_DELAY,
+                false
+            ),
+            Some("root".to_owned())
+        );
+        assert_eq!(baseline.len(), 1);
+    }
+
+    #[test]
+    fn rescan_notification_uses_catalog_ids_not_visited_subscription_keys() {
+        let roots = HashMap::from([
+            (
+                "root".to_owned(),
+                WatchedRoot {
+                    id: "root".to_owned(),
+                    path: PathBuf::from("fixture"),
+                    recursive: false,
+                },
+            ),
+            (
+                "folder.visited.root.child".to_owned(),
+                WatchedRoot {
+                    id: "root".to_owned(),
+                    path: PathBuf::from("fixture/child"),
+                    recursive: false,
+                },
+            ),
+        ]);
+        let event = Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        assert_eq!(
+            roots_for_event(&event, &roots),
+            HashSet::from(["root".to_owned()])
+        );
+    }
 
     #[test]
     fn directory_timestamp_updates_do_not_trigger_recursive_scans() {

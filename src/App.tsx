@@ -151,12 +151,18 @@ function messageFrom(...messages: Array<string | undefined>): string | undefined
 
 function scheduleDeferredUi(callback: () => void): () => void {
   const idleWindow = window as Partial<Window>;
-  if (idleWindow.requestIdleCallback) {
-    const idleId = idleWindow.requestIdleCallback(callback, { timeout: 1_500 });
-    return () => idleWindow.cancelIdleCallback?.(idleId);
-  }
-  const timerId = globalThis.setTimeout(callback, 750);
-  return () => globalThis.clearTimeout(timerId);
+  let idleId: number | undefined;
+  // An idle callback alone may fire immediately while the first catalog IPC
+  // is in flight, putting optional modules back on the startup critical path.
+  const timerId = globalThis.setTimeout(() => {
+    if (idleWindow.requestIdleCallback) {
+      idleId = idleWindow.requestIdleCallback(callback, { timeout: 1_500 });
+    } else callback();
+  }, 750);
+  return () => {
+    globalThis.clearTimeout(timerId);
+    if (idleId !== undefined) idleWindow.cancelIdleCallback?.(idleId);
+  };
 }
 
 function App() {
@@ -520,9 +526,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (section !== "home" || loading) return;
+    // Visible favorites must not wait behind whole-library counts. This
+    // effect runs before refresh; catalog revisions still revalidate it.
+    if (section !== "home") return;
     let active = true;
-    setHomeMediaLoading(true);
+    // Keep the previous shelf while revalidating counts/favorites instead of
+    // briefly replacing every loaded image with the loading placeholder.
     void listMediaItems({
       favoritesOnly: true,
       sortBy: "modifiedAt",
@@ -535,7 +544,7 @@ function App() {
       if (result.error) setError((current) => current ?? result.error);
     });
     return () => { active = false; };
-  }, [loading, section, summary.favorites]);
+  }, [section, catalogRefreshVersion, summary.favorites]);
 
   const openHomeFolder = useCallback((folder: FolderActivityRecord) => {
     rememberFolderNavigation(folder.navigationKey, {

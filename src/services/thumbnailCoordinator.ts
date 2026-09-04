@@ -63,9 +63,12 @@ const MAX_CONCURRENT_BATCHES = 2;
 const entries = new Map<string, ThumbnailEntry>();
 const entriesByMediaId = new Map<string, Set<ThumbnailEntry>>();
 const queuedEntries = new Map<string, ThumbnailEntry>();
+const pendingNotifications = new Set<ThumbnailEntry>();
 let activeBatches = 0;
 let requestSequence = 0;
 let lookupPumpScheduled = false;
+let notificationScheduled = false;
+let pruneScheduled = false;
 
 function thumbnailKey(mediaId: string, revision?: string): string {
   return `${mediaId}\u0000${revision ?? ""}`;
@@ -125,22 +128,43 @@ function publish(entry: ThumbnailEntry, snapshot: ThumbnailSnapshot) {
   entry.snapshot = snapshot;
   if (snapshot.status === "queued") queuedEntries.set(entry.key, entry);
   entry.touchedAt = Date.now();
-  entry.listeners.forEach((listener) => listener());
+  if (entry.listeners.size === 0) return;
+  pendingNotifications.add(entry);
+  if (notificationScheduled) return;
+  notificationScheduled = true;
+  // State remains immediately readable, but sibling native completions and
+  // queued/loading transitions should not each force a synchronous React
+  // render. Publish the latest snapshot once per card per display frame.
+  const notify = () => {
+    notificationScheduled = false;
+    const changed = [...pendingNotifications];
+    pendingNotifications.clear();
+    changed.forEach((item) => item.listeners.forEach((listener) => listener()));
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(notify);
+  else setTimeout(notify, 16);
 }
 
 function pruneEntries() {
-  if (entries.size <= MAX_COORDINATOR_ENTRIES) return;
-  const removable = [...entries.values()]
-    .filter((entry) =>
-      entry.leases.size === 0
-      && entry.snapshot.status !== "loading"
-      && entry.snapshot.status !== "queued",
-    )
-    .sort((left, right) => left.touchedAt - right.touchedAt);
-  while (entries.size > MAX_COORDINATOR_ENTRIES && removable.length > 0) {
-    const entry = removable.shift();
-    if (entry) deleteEntry(entry);
-  }
+  if (entries.size <= MAX_COORDINATOR_ENTRIES || pruneScheduled) return;
+  pruneScheduled = true;
+  // Known paths arrive in page-sized bursts. Sort the cache once per burst,
+  // not once for every seeded item beyond the cache limit.
+  queueMicrotask(() => {
+    pruneScheduled = false;
+    const removable = [...entries.values()]
+      .filter((entry) =>
+        entry.leases.size === 0
+        && entry.listeners.size === 0
+        && entry.snapshot.status !== "loading"
+        && entry.snapshot.status !== "queued",
+      )
+      .sort((left, right) => left.touchedAt - right.touchedAt);
+    for (const entry of removable) {
+      if (entries.size <= MAX_COORDINATOR_ENTRIES) break;
+      deleteEntry(entry);
+    }
+  });
 }
 
 function nextQueuedEntry(): ThumbnailEntry | undefined {
@@ -231,16 +255,23 @@ function pumpLookupQueue() {
     void resolveLookupBatch(requests).finally(() => {
       activeBatches = Math.max(0, activeBatches - 1);
       pruneEntries();
-      scheduleLookupPump();
+      scheduleLookupPump(true);
     });
   }
 }
 
-function scheduleLookupPump() {
-  if (lookupPumpScheduled) return;
+function scheduleLookupPump(yieldToUi = false) {
+  if (
+    lookupPumpScheduled
+    || queuedEntries.size === 0
+    || activeBatches >= MAX_CONCURRENT_BATCHES
+  ) return;
   lookupPumpScheduled = true;
-  // Coalesce sibling card effects into one native call.
-  queueMicrotask(pumpLookupQueue);
+  // Start sibling card effects together, then yield between batches. Cached
+  // native replies can otherwise chain microtasks until the range is drained,
+  // preventing the browser from painting the thumbnails already resolved.
+  if (yieldToUi) setTimeout(pumpLookupQueue, 0);
+  else queueMicrotask(pumpLookupQueue);
 }
 
 function queueEntry(entry: ThumbnailEntry, deferPump = false) {
@@ -286,6 +317,7 @@ function retainEntry(
       entry.generation += 1;
       publish(entry, { pending: true, status: "idle" });
     }
+    pruneEntries();
   };
 }
 
