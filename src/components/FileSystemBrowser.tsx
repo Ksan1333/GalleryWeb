@@ -83,31 +83,35 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged }: { refreshVe
     if (result.error) setError(result.error); else await load(false);
     setPriorityBusy(false);
   }
-  return <div className="filesystem-browser">
-    <header className="filesystem-heading"><div><p className="kicker">FILE EXPLORER</p><h2>全フォルダー</h2>
+  return <div className="page filesystem-browser">
+    <header className="filesystem-heading"><div><p className="kicker">FILE EXPLORER</p><h1>全フォルダー</h1>
       <p>ドライブからすべてのフォルダーを閲覧できます。開いた場所を読み込み、優先フォルダーは配下も先に読み込みます。</p></div></header>
     <div className="filesystem-toolbar">
+      <nav className="filesystem-navigation" aria-label="フォルダー移動">
       <button type="button" className="secondary-button" disabled={!history.length || priorityBusy} onClick={() => { setPath(history[history.length - 1]); setHistory((items) => items.slice(0, -1)); }}><Icon name="arrowLeft" />戻る</button>
       <button type="button" className="secondary-button" onClick={() => navigate()} disabled={priorityBusy}><Icon name="folderWindows" />PC</button>
       <button type="button" className="secondary-button" disabled={!path || priorityBusy} onClick={() => navigate(listing?.parentPath ?? undefined)}><Icon name="arrowUp" />上へ</button>
+      </nav>
       <form onSubmit={(event) => { event.preventDefault(); navigate(address.trim() || undefined); }}>
         <input aria-label="フォルダーのパス" placeholder="フォルダーのパスを入力" value={address} onChange={(event) => setAddress(event.target.value)} disabled={priorityBusy} />
         <button type="submit" className="secondary-button" disabled={priorityBusy}>開く</button>
       </form>
+      <div className="filesystem-actions">
       <button type="button" className="secondary-button" onClick={() => void load()} disabled={loading || priorityBusy}><Icon name="refresh" className={loading ? "rotating" : undefined} />更新</button>
       {listing?.path && <button type="button" className="secondary-button" disabled={priorityBusy || Boolean(listing.priorityPath)} title={listing.priorityPath ?? "このフォルダーと配下を優先的に読み込む"} onClick={() => void prioritize()}><Icon name="star" />{priorityBusy ? "読み込み中…" : listing.priorityPath ? "優先読み込み対象" : "優先読み込みに追加"}</button>}
+      </div>
     </div>
     {error && <div className="operation-message error" role="alert"><Icon name="warning" />{error}</div>}
     {priorities.length > 0 && <section className="filesystem-priorities" aria-label="優先読み込みフォルダー"><strong>優先読み込み</strong>
-      {priorities.map((root) => <div key={root.id}><button type="button" onClick={() => navigate(root.path)} disabled={priorityBusy} title={root.path}><Icon name="folderWindows" />{root.displayName}</button><button type="button" aria-label={`${root.displayName}の優先指定を解除`} title="優先指定だけを解除（ファイル・タグ・お気に入りは保持）" disabled={priorityBusy} onClick={() => void removePriority(root)}><Icon name="close" /></button></div>)}
+      {priorities.map((root) => <div key={root.id}><button type="button" onClick={() => navigate(root.path)} disabled={priorityBusy} title={root.path}><Icon name="folderWindows" /><span>{root.displayName}</span></button><button type="button" aria-label={`${root.displayName}の優先指定を解除`} title="優先指定だけを解除（ファイル・タグ・お気に入りは保持）" disabled={priorityBusy} onClick={() => void removePriority(root)}><Icon name="close" /></button></div>)}
     </section>}
     {loading && !listing && <p role="status">フォルダーを読み込んでいます…</p>}
     {listing && !listing.path && <div className="filesystem-drives">{listing.folders.map((folder) => <button key={folder.path} type="button" onClick={() => navigate(folder.path)}><Icon name="folderWindows" /><strong>{folder.displayName}</strong><small>{folder.path}</small></button>)}</div>}
-    {listing?.rootId && <MediaCollection key={`${listing.rootId}:${listing.relativeFolder}`} embedded compactFileLayout advancedGallerySearch viewerIncludesAllMedia
+    {listing?.rootId && <section className="filesystem-content" aria-label="フォルダーとメディア"><MediaCollection key={`${listing.rootId}:${listing.relativeFolder}`} embedded compactFileLayout advancedGallerySearch viewerIncludesAllMedia showLeadingFolderCounts={false}
       eyebrow="FOLDER" title={listing.path ?? "フォルダー"} description="フォルダーとメディア" kinds={["image", "gif", "video", "pdf", "archive"]}
       emptyTitle="このフォルダーは空です" emptyDescription="表示できるメディアや子フォルダーがありません。"
       initialRootId={listing.rootId} initialFolderPath={listing.relativeFolder} refreshVersion={revision}
       leadingFolders={listing.folders.map((folder) => ({ key: folder.path, rootId: listing.rootId!, relativeFolder: folder.path, name: folder.displayName, displayPath: folder.path, itemCount: 0, hasChildren: true }))}
-      onOpenLeadingFolder={(folder) => navigate(folder.displayPath)} onDataChanged={() => { void load(false); onChanged.current(); }} />}
+      onOpenLeadingFolder={(folder) => navigate(folder.displayPath)} onDataChanged={() => { void load(false); onChanged.current(); }} /></section>}
   </div>;
 }

@@ -133,6 +133,7 @@ type MediaCollectionProps = {
   onBack?: () => void;
   onNavigateFolderPath?: (path: string | undefined) => void;
   leadingFolders?: FolderGroup[];
+  showLeadingFolderCounts?: boolean;
   onOpenLeadingFolder?: (folder: FolderGroup) => void;
   favoriteFolderKeys?: ReadonlySet<string>;
   onToggleLeadingFolderFavorite?: (folder: FolderGroup) => void;
@@ -1319,7 +1320,7 @@ export function MediaCollection({
   advancedGallerySearch = false, viewerIncludesAllMedia = false,
   initialSearch = "", initialRootId, initialFolderPath, embedded = false,
   compactFileLayout = false, onBack,
-  onNavigateFolderPath, leadingFolders = [], onOpenLeadingFolder, favoriteFolderKeys,
+  onNavigateFolderPath, leadingFolders = [], showLeadingFolderCounts = true, onOpenLeadingFolder, favoriteFolderKeys,
   onToggleLeadingFolderFavorite, onAddFolder, onDataChanged,
   tagNavigation, refreshVersion,
 }: MediaCollectionProps) {
@@ -3155,19 +3156,20 @@ export function MediaCollection({
                   <button
                     className="folder-card mixed-folder-card"
                     type="button"
+                    title={slot.folder.displayPath}
                     onClick={() => onOpenLeadingFolder?.(slot.folder)}
                   >
                     <div className="folder-visual explorer-folder-visual">
                       <span className="explorer-folder-glyph"><Icon name="folderWindows" className="windows-folder-icon" /></span>
-                      <span className="folder-item-count">{slot.folder.itemCount.toLocaleString("ja-JP")}</span>
+                      {showLeadingFolderCounts && <span className="folder-item-count">{slot.folder.itemCount.toLocaleString("ja-JP")}</span>}
                     </div>
                     <div>
                       <strong>{slot.folder.name}</strong>
                       <span title={slot.folder.displayPath}>{slot.folder.displayPath}</span>
-                      <small>
+                      {showLeadingFolderCounts && <small>
                         {slot.folder.itemCount.toLocaleString("ja-JP")} 件
                         {slot.folder.hasChildren ? " · サブフォルダーあり" : ""}
-                      </small>
+                      </small>}
                     </div>
                   </button>
                   {onToggleLeadingFolderFavorite && (
