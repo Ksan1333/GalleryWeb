@@ -30,6 +30,8 @@ import {
   recycleMediaItem,
   reportMediaLoadFailure,
   saveMediaThumbnail,
+  scanLibrary,
+  syncMediaFolder,
   setAgeRating,
   setFavorite,
   setMediaTags,
@@ -1345,6 +1347,7 @@ export function MediaCollection({
   const [searchHistory, setSearchHistory] = useState<GallerySearchHistoryEntry[]>([]);
   const [contextMenu, setContextMenu] = useState<GalleryContextMenuState>();
   const [reloadVersion, setReloadVersion] = useState(0);
+  const [catalogRevision, setCatalogRevision] = useState(0);
   const [pageLoadRevision, setPageLoadRevision] = useState(0);
   const [viewport, setViewport] = useState({ width: 900, height: 620, scrollTop: 0 });
   const [galleryFilters, setGalleryFilters] = useState<GallerySearchFilters>(() => ({
@@ -1726,7 +1729,9 @@ export function MediaCollection({
         () => refreshWorker(),
       ));
     }
+    if (catalogLoadGeneration.current !== loadGeneration) return;
     setRefreshing(false);
+    if (!infoResult.error) setCatalogRevision((current) => current + 1);
     void rootRequest.then((rootResult) => {
       if (
         currentQueryKey.current !== queryKey
@@ -2015,6 +2020,16 @@ export function MediaCollection({
     quietReloadQueryKey.current = queryKey;
     setReloadVersion((current) => current + 1);
   }, [cancelRangeSelection, queryKey]);
+
+  const refreshCatalogFromDisk = useCallback(async () => {
+    setRefreshing(true);
+    const result = initialRootId
+      ? await syncMediaFolder(initialRootId, initialFolderPath)
+      : await scanLibrary();
+    requestCatalogReload();
+    onDataChanged?.();
+    if (result.error) setError(result.error);
+  }, [initialRootId, initialFolderPath, onDataChanged, requestCatalogReload]);
 
   useEffect(() => {
     if (
@@ -2749,7 +2764,7 @@ export function MediaCollection({
                 else setGalleryFilters((current) => ({ ...current, folderPath: undefined }));
               }}
             >
-              {breadcrumbRoot?.displayName ?? "登録フォルダー"}
+              {breadcrumbRoot?.displayName ?? "優先フォルダー"}
             </button>
             {breadcrumbSegments.map((segment, index) => {
               const path = breadcrumbSegments.slice(0, index + 1).join("/");
@@ -2802,7 +2817,7 @@ export function MediaCollection({
             <button
               className="secondary-button"
               type="button"
-              onClick={requestCatalogReload}
+              onClick={() => void refreshCatalogFromDisk()}
               disabled={refreshing}
             >
               <Icon name="refresh" className={refreshing ? "rotating" : undefined} />更新
@@ -3018,8 +3033,8 @@ export function MediaCollection({
               <strong>「{translateTag(tagNavigation.tagName)}」のメディア</strong>
               <span>
                 {rootId
-                  ? `${roots.find((root) => root.id === rootId)?.displayName ?? "現在の登録フォルダー"}${galleryFilters.folderPath ? ` / ${galleryFilters.folderPath}` : ""}`
-                  : "すべての登録フォルダー"}
+                  ? `${roots.find((root) => root.id === rootId)?.displayName ?? "現在の優先フォルダー"}${galleryFilters.folderPath ? ` / ${galleryFilters.folderPath}` : ""}`
+                  : "すべての優先フォルダー"}
               </span>
             </div>
             {rootId && (
@@ -3058,7 +3073,7 @@ export function MediaCollection({
           title={search ? "検索結果がありません" : emptyTitle}
           description={search ? "検索語やフィルターを変更してください。" : emptyDescription}
           action={!search && onAddFolder
-            ? <button className="primary-button" type="button" onClick={onAddFolder}><Icon name="folderPlus" />フォルダーを追加</button>
+            ? <button className="primary-button" type="button" onClick={onAddFolder}><Icon name="folderPlus" />優先フォルダーを追加</button>
             : undefined}
         />
       ) : (
@@ -3370,6 +3385,7 @@ export function MediaCollection({
             currentId={selected.id}
             collection={viewerIncludesAllMedia ? {
               query: baseQuery,
+              revision: catalogRevision,
               totalCount: pageInfo.totalCount,
               currentIndex: mediaIndexById.get(selected.id) ?? viewerReturnTarget.current?.index ?? 0,
               indexedItems: [...itemByIndex.entries()],
@@ -3624,10 +3640,13 @@ export function FolderMediaCollection({
     });
   }, [activityInput, directCount, loading, location, selectedRoot]);
 
-  async function refreshFolders() {
+  async function refreshFolders(scan = false) {
     const loadGeneration = folderLoadGeneration.current + 1;
     folderLoadGeneration.current = loadGeneration;
     setRefreshing(true);
+    const syncResult = scan
+      ? location ? await syncMediaFolder(location.rootId, location.path) : await scanLibrary()
+      : undefined;
     const [rootResult, folderResult] = await Promise.all([
       listLibraryRoots(),
       location
@@ -3637,7 +3656,7 @@ export function FolderMediaCollection({
     if (folderLoadGeneration.current !== loadGeneration) return;
     setRoots(rootResult.data);
     if (folderResult) setFolderEntries(folderResult.data);
-    setError(rootResult.error || folderResult?.error);
+    setError(syncResult?.error || rootResult.error || folderResult?.error);
     setLoading(false);
     setRefreshing(false);
     setMediaRefreshVersion((current) => current + 1);
@@ -3689,7 +3708,7 @@ export function FolderMediaCollection({
               aria-current={pathSegments.length === 0 ? "page" : undefined}
               onClick={() => visitLocation({ ...location, path: "" })}
             >
-              {selectedRoot?.displayName ?? "登録フォルダー"}
+              {selectedRoot?.displayName ?? "優先フォルダー"}
             </button>
             {pathSegments.map((segment, index) => {
               const path = pathSegments.slice(0, index + 1).join("/");
@@ -3746,7 +3765,7 @@ export function FolderMediaCollection({
                 <Icon name="arrowRight" />戻る
               </button>
             )}
-            <button className="secondary-button" type="button" onClick={() => void refreshFolders()} disabled={refreshing}>
+            <button className="secondary-button" type="button" onClick={() => void refreshFolders(true)} disabled={refreshing}>
               <Icon name="refresh" className={refreshing ? "rotating" : undefined} />更新
             </button>
           </div>
@@ -3759,14 +3778,14 @@ export function FolderMediaCollection({
       )}
       {error && <StatusPanel tone="error" icon="warning" title="フォルダーを読み込めませんでした"><p>{error}</p></StatusPanel>}
       {loading ? (
-        <LoadingPanel label={location ? "直下のフォルダーを読み込み中…" : "登録フォルダーを読み込み中…"} />
+        <LoadingPanel label={location ? "直下のフォルダーを読み込み中…" : "優先フォルダーを読み込み中…"} />
       ) : !location ? (
         roots.length === 0 ? (
           <EmptyState
             icon={emptyIcon}
             title={emptyTitle}
             description={emptyDescription}
-            action={onAddFolder ? <button className="primary-button" type="button" onClick={onAddFolder}><Icon name="folderPlus" />フォルダーを追加</button> : undefined}
+            action={onAddFolder ? <button className="primary-button" type="button" onClick={onAddFolder}><Icon name="folderPlus" />優先フォルダーを追加</button> : undefined}
           />
         ) : (
           <>
@@ -3807,7 +3826,7 @@ export function FolderMediaCollection({
                   <span className="root-folder-copy">
                     <strong>{root.displayName}</strong>
                     <span title={root.path}>{root.path}</span>
-                    <small>登録フォルダーを開く</small>
+                    <small>優先フォルダーを開く</small>
                   </span>
                   <Icon name="chevronRight" />
                 </button>

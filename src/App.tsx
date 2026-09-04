@@ -26,7 +26,7 @@ import {
   listLibraryRoots,
   listMediaItems,
   pickLibraryRoot,
-  removeLibraryRoot,
+  setFolderPriority,
   scanLibrary,
   setJsonPreference,
   takePendingXUrl,
@@ -60,6 +60,7 @@ const AiAnalysisMonitor = lazy(() => import("./components/AiAnalysisMonitor").th
 const FirstRunTutorial = lazy(() => import("./components/FirstRunTutorial").then((module) => ({ default: module.FirstRunTutorial })));
 const MediaCollection = lazy(() => import("./components/MediaCollection").then((module) => ({ default: module.MediaCollection })));
 const FolderMediaCollection = lazy(() => import("./components/MediaCollection").then((module) => ({ default: module.FolderMediaCollection })));
+const FileSystemBrowser = lazy(() => import("./components/FileSystemBrowser").then((module) => ({ default: module.FileSystemBrowser })));
 const AIAnalysisModal = lazy(() => import("./components/AIAnalysisModal").then((module) => ({ default: module.AIAnalysisModal })));
 const FavoriteSitesPage = lazy(() => import("./components/ExtraPages").then((module) => ({ default: module.FavoriteSitesPage })));
 const FavoriteCreatorsPage = lazy(() => import("./components/ExtraPages").then((module) => ({ default: module.FavoriteCreatorsPage })));
@@ -85,11 +86,6 @@ type NavigationItem = {
 const IMAGE_MEDIA_KINDS: MediaKind[] = ["image", "gif"];
 const VIDEO_MEDIA_KINDS: MediaKind[] = ["video"];
 const BOOK_MEDIA_KINDS: MediaKind[] = ["pdf", "archive"];
-const ALL_MEDIA_KINDS: MediaKind[] = [
-  ...IMAGE_MEDIA_KINDS,
-  ...VIDEO_MEDIA_KINDS,
-  ...BOOK_MEDIA_KINDS,
-];
 
 function extractXPostUrl(value: string): string | undefined {
   return value.match(/https:\/\/(?:www\.|mobile\.)?(?:x\.com|twitter\.com)\/[^\s<>]+\/status\/\d+/i)?.[0];
@@ -100,7 +96,7 @@ const navigationGroups: Array<{ label?: string; items: NavigationItem[] }> = [
     items: [
       { id: "home", label: "ホーム", icon: "home" },
       { id: "gallery", label: "ギャラリー", icon: "gallery" },
-      { id: "allFolders", label: "メディアフォルダー", icon: "folder" },
+      { id: "allFolders", label: "全フォルダー", icon: "folder" },
       { id: "favorites", label: "お気に入り", icon: "star" },
     ],
   },
@@ -436,7 +432,8 @@ function App() {
   }, []);
 
   const refreshSummary = useCallback(async () => {
-    const result = await getLibrarySummary();
+    const [result, rootResult] = await Promise.all([getLibrarySummary(), listLibraryRoots()]);
+    if (!rootResult.error) setRoots(rootResult.data);
     if (result.error) {
       setError(result.error);
       return;
@@ -571,7 +568,7 @@ function App() {
 
   async function addFolder() {
     const operation = startOperation({
-      label: "フォルダーを追加",
+      label: "優先フォルダーを追加",
       detail: "追加するフォルダーを選択しています",
       progress: null,
     });
@@ -589,10 +586,10 @@ function App() {
         return;
       }
 
-      operation.update({ detail: "フォルダーを登録しています" });
+      operation.update({ detail: "優先フォルダーを設定しています" });
       const added = await addLibraryRoot(picked.data);
       if (!added.data || added.error) {
-        const addError = added.error ?? "フォルダーを登録できませんでした。";
+        const addError = added.error ?? "優先フォルダーを設定できませんでした。";
         setError(addError);
         operation.fail(addError);
         return;
@@ -603,7 +600,7 @@ function App() {
         detail: "メディアを初回スキャンしています",
       });
       const scanResult = await scanLibrary(added.data.id);
-      if (!scanResult.error) publishCatalogChange();
+      if (scanResult.available) publishCatalogChange();
       const refreshError = await refresh(false);
       const finalError = scanResult.error ?? refreshError;
       if (finalError) {
@@ -635,7 +632,7 @@ function App() {
     setBusy(true);
     try {
       const result = await scanLibrary(rootId);
-      if (!result.error) publishCatalogChange();
+      if (result.available) publishCatalogChange();
       const refreshError = await refresh(false);
       const finalError = result.error ?? refreshError;
       if (finalError) {
@@ -656,27 +653,27 @@ function App() {
   }
 
   async function removeRoot(root: LibraryRoot) {
-    if (!window.confirm(`「${root.displayName}」を登録解除しますか？ ファイル自体は削除されません。`)) return;
+    if (!window.confirm(`「${root.displayName}」の優先指定を解除しますか？ ファイル・タグ・お気に入りは残ります。`)) return;
     const operation = startOperation({
-      label: `${root.displayName}の登録を解除`,
+      label: `${root.displayName}の優先指定を解除`,
       detail: "ライブラリ設定を更新しています",
       progress: null,
     });
     setError(undefined);
     setBusy(true);
     try {
-      const result = await removeLibraryRoot(root.id);
+      const result = await setFolderPriority(root.id, false);
       if (result.data && !result.error) publishCatalogChange();
       const refreshError = await refresh(false);
       const finalError =
         result.error ??
-        (!result.data ? "フォルダーを登録解除できませんでした。" : undefined) ??
+        (!result.data ? "フォルダーの優先指定を解除できませんでした。" : undefined) ??
         refreshError;
       if (finalError) {
         setError(finalError);
         operation.fail(finalError);
       } else {
-        operation.succeed("登録を解除しました。ファイルは削除されていません");
+        operation.succeed("優先指定を解除しました。ファイルは削除されていません");
       }
     } catch (caught) {
       const removeError = operationErrorMessage(caught);
@@ -707,7 +704,7 @@ function App() {
               </p>
               <div className="hero-actions">
                 <button className="primary-button" type="button" onClick={() => void addFolder()} disabled={busy || !nativeAvailable}>
-                  <Icon name="folderPlus" />{busy ? "処理中…" : "フォルダーを追加"}
+                  <Icon name="folderPlus" />{busy ? "処理中…" : "優先フォルダーを追加"}
                 </button>
                 <button className="secondary-button" type="button" onClick={() => void scan()} disabled={busy || roots.length === 0}>
                   <Icon name="refresh" />ライブラリを同期
@@ -735,7 +732,7 @@ function App() {
               <button type="button" onClick={() => navigateToSection("books")}><span><i className="pulse-dot book" />ブック</span><strong>{summary.books.toLocaleString("ja-JP")}</strong></button>
               <button type="button" onClick={() => navigateToSection("favorites")}><span><i className="pulse-dot favorite" />お気に入り</span><strong>{summary.favorites.toLocaleString("ja-JP")}</strong></button>
             </div>
-            <footer><span><Icon name="hardDrive" /><small>使用容量</small><strong>{formatBytes(summary.storageBytes)}</strong></span><span><Icon name="folder" /><small>登録先</small><strong>{summary.libraryRoots} フォルダー</strong></span></footer>
+            <footer><span><Icon name="hardDrive" /><small>使用容量</small><strong>{formatBytes(summary.storageBytes)}</strong></span><span><Icon name="folder" /><small>読み込み先</small><strong>{summary.libraryRoots} フォルダー</strong></span></footer>
           </aside>
         </div>
 
@@ -761,7 +758,7 @@ function App() {
         <section className="root-panel home-roots-panel">
           <div className="section-heading"><div><p className="kicker">SOURCES</p><h2>メディアの保存場所</h2></div><button className="secondary-button" type="button" onClick={() => void addFolder()} disabled={busy || !nativeAvailable}><Icon name="folderPlus" />追加</button></div>
           {loading ? <p className="muted-copy">読み込み中…</p> : roots.length === 0 ? (
-            <div className="empty-panel"><Icon name="folder" /><p>フォルダーを追加すると、ここから状態を確認できます。</p></div>
+            <div className="empty-panel"><Icon name="folder" /><p>優先フォルダーを追加すると、ここから状態を確認できます。</p></div>
           ) : (
             <div className="root-list">
               {roots.map((root) => <article key={root.id}><Icon name="folder" /><div><strong>{root.displayName}</strong><span>{root.path}</span><small>{root.mediaCount.toLocaleString("ja-JP")} 件のメディア</small></div><button type="button" onClick={() => void scan(root.id)} disabled={busy}>同期</button></article>)}
@@ -793,12 +790,13 @@ function App() {
   }
 
   function settings() {
+    const priorityRoots = roots.filter((root) => root.isPriority);
     return (
       <div className="dashboard functional-dashboard">
         {error && <div className="operation-message error"><Icon name="warning" />{error}</div>}
         <section className="settings-panel">
-          <div className="section-heading"><div><p className="kicker">LIBRARY SETTINGS</p><h2>登録フォルダーを管理</h2></div><button className="primary-button" type="button" onClick={() => void addFolder()} disabled={busy || !nativeAvailable}><Icon name="folderPlus" />追加</button></div>
-          {roots.length === 0 ? <div className="empty-panel"><Icon name="folder" /><p>フォルダーを登録すると、ここで再スキャンや登録解除ができます。</p></div> : <div className="root-list settings-root-list">{roots.map((root) => <article key={root.id}><Icon name="folder" /><div><strong>{root.displayName}</strong><span>{root.path}</span><small>{root.mediaCount} 件のメディア</small></div><button type="button" onClick={() => void scan(root.id)} disabled={busy}>再スキャン</button><button className="danger-button" type="button" onClick={() => void removeRoot(root)} disabled={busy}>登録解除</button></article>)}</div>}
+          <div className="section-heading"><div><p className="kicker">LIBRARY SETTINGS</p><h2>優先読み込みフォルダー</h2></div><button className="primary-button" type="button" onClick={() => void addFolder()} disabled={busy || !nativeAvailable}><Icon name="folderPlus" />追加</button></div>
+          {priorityRoots.length === 0 ? <div className="empty-panel"><Icon name="folderWindows" /><p>優先フォルダーは配下を先に読み込みます。通常の閲覧は全フォルダーから利用できます。</p></div> : <div className="root-list settings-root-list">{priorityRoots.map((root) => <article key={root.id}><Icon name="folderWindows" /><div><strong>{root.displayName}</strong><span>{root.path}</span><small>{root.mediaCount} 件のメディア</small></div><button type="button" onClick={() => void scan(root.id)} disabled={busy}>再スキャン</button><button className="danger-button" type="button" onClick={() => void removeRoot(root)} disabled={busy}>優先指定を解除</button></article>)}</div>}
         </section>
         <section className="settings-panel">
           <div className="section-heading"><div><p className="kicker">X DOWNLOADER</p><h2>ダウンロード設定</h2></div></div>
@@ -889,7 +887,7 @@ function App() {
             </button>
           </div>
           <p className="muted-copy">
-            フォルダー登録、ビュワー、AI分析、便利機能まで基本操作を6ステップで確認できます。
+            優先読み込み、ビュワー、AI分析、便利機能まで基本操作を6ステップで確認できます。
           </p>
         </section>
         <DataPortabilitySettings
@@ -916,7 +914,7 @@ function App() {
             <span><small>カタログ</small><strong>SQLite v{runtimeInfo?.databaseSchemaVersion ?? "…"}</strong></span>
             <span><small>実行環境</small><strong>{runtimeInfo ? `${runtimeInfo.os} · ${runtimeInfo.arch}` : "確認中…"}</strong></span>
           </div>
-          <p className="muted-copy">メディアの削除はOSのごみ箱を使用し、登録解除だけでは元ファイルを削除しません。</p>
+          <p className="muted-copy">メディアの削除はOSのごみ箱を使用し、優先指定の解除では元ファイルを削除しません。</p>
         </section>
       </div>
     );
@@ -937,11 +935,11 @@ function App() {
 
   function content() {
     if (section === "home") return home();
-    if (section === "gallery") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="GALLERY" title="ギャラリー" description="画像・GIFを中心に、設定で動画・ブックもまとめて確認できます。" kinds={galleryMediaKinds} compactFileLayout advancedGallerySearch viewerIncludesAllMedia tagNavigation={tagGalleryNavigation} emptyTitle="メディアはまだありません" emptyDescription="フォルダーを登録してスキャンしてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
-    if (section === "allFolders") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="all" eyebrow="MEDIA FOLDERS" title="メディアフォルダー" description="画像・GIF・動画・PDF・ZIP/CBZを、同じフォルダー階層でまとめて表示します。" kinds={ALL_MEDIA_KINDS} emptyTitle="メディアフォルダーはまだありません" emptyDescription="メディアを含むフォルダーを登録してスキャンしてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
-    if (section === "folders") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="images" eyebrow="IMAGES" title="画像" description="画像とGIFだけを、元のフォルダー構成ごとに表示します。" kinds={IMAGE_MEDIA_KINDS} emptyTitle="画像フォルダーはまだありません" emptyDescription="画像またはGIFを含むフォルダーを登録してスキャンしてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
-    if (section === "videos") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="videos" eyebrow="VIDEOS" title="動画" description="動画をフォルダー単位で整理して表示します。" kinds={VIDEO_MEDIA_KINDS} emptyTitle="動画はまだありません" emptyDescription="フォルダーを登録してスキャンしてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
-    if (section === "books") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="books" eyebrow="BOOKS" title="ブック" description="PDFとZIP/CBZをフォルダー単位で整理して表示します。" kinds={BOOK_MEDIA_KINDS} emptyTitle="ブックはまだありません" emptyDescription="フォルダーを登録してスキャンしてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
+    if (section === "gallery") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="GALLERY" title="ギャラリー" description="画像・GIFを中心に、設定で動画・ブックもまとめて確認できます。" kinds={galleryMediaKinds} compactFileLayout advancedGallerySearch viewerIncludesAllMedia tagNavigation={tagGalleryNavigation} emptyTitle="メディアはまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
+    if (section === "allFolders") return <FileSystemBrowser refreshVersion={catalogRefreshVersion} onDataChanged={refreshSummary} />;
+    if (section === "folders") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="images" eyebrow="IMAGES" title="画像" description="画像とGIFだけを、元のフォルダー構成ごとに表示します。" kinds={IMAGE_MEDIA_KINDS} emptyTitle="画像フォルダーはまだありません" emptyDescription="全フォルダーから画像やGIFのある場所を開いてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
+    if (section === "videos") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="videos" eyebrow="VIDEOS" title="動画" description="動画をフォルダー単位で整理して表示します。" kinds={VIDEO_MEDIA_KINDS} emptyTitle="動画はまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
+    if (section === "books") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="books" eyebrow="BOOKS" title="ブック" description="PDFとZIP/CBZをフォルダー単位で整理して表示します。" kinds={BOOK_MEDIA_KINDS} emptyTitle="ブックはまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "favorites") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="FAVORITES" title="お気に入り" description="星を付けたメディアを、形式で絞り込んで表示します。" compactFileLayout favoritesOnly showFavoriteKindFilter emptyTitle="お気に入りはまだありません" emptyDescription="メディアカードの星ボタンで追加できます。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "sites") return <FavoriteSitesPage />;
     if (section === "creators") return <FavoriteCreatorsPage />;
@@ -1014,7 +1012,7 @@ function App() {
             <div className="page-identity"><span>{activeDetails.eyebrow}</span><div><strong>{activeLabel}</strong><small>{activeDetails.description}</small></div></div>
           </div>
           <div className="topbar-actions">
-            <button className="topbar-add-button" type="button" onClick={() => void addFolder()} disabled={busy || !nativeAvailable}><Icon name="folderPlus" /><span>フォルダーを追加</span></button>
+            <button className="topbar-add-button" type="button" onClick={() => void addFolder()} disabled={busy || !nativeAvailable}><Icon name="folderPlus" /><span>優先フォルダーを追加</span></button>
             <NotificationCenter />
             <button className="icon-button" type="button" aria-label="すべてのフォルダーを再スキャン" title="すべてのフォルダーを再スキャン" onClick={() => void scan()} disabled={loading || busy || !nativeAvailable || roots.length === 0}><Icon name="refresh" className={busy ? "rotating" : undefined} /></button>
           </div>

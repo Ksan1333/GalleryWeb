@@ -1,0 +1,14 @@
+.filesystem-browser { display: grid; gap: 14px; }
+.filesystem-heading h2 { margin: 0; }
+.filesystem-heading p:last-child { color: var(--muted); margin-bottom: 0; }
+.filesystem-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.filesystem-toolbar form { display: flex; gap: 6px; flex: 1 1 300px; }
+.filesystem-toolbar input { min-width: 100px; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: inherit; padding: 8px 12px; }
+.filesystem-priorities { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.filesystem-priorities > div { display: flex; border: 1px solid var(--border); border-radius: 8px; }
+.filesystem-priorities button { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: transparent; color: inherit; border: 0; cursor: pointer; }
+.filesystem-priorities svg { width: 20px; height: 20px; }
+.filesystem-drives { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 112px)); gap: 10px; }
+.filesystem-drives button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; aspect-ratio: 1; padding: 8px; border: 1px solid var(--border); border-radius: 8px; color: inherit; background: var(--panel); cursor: pointer; }
+.filesystem-drives svg { width: 42px; height: 42px; }
+.filesystem-drives small { color: var(--muted); }

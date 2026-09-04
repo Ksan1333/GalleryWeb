@@ -32,6 +32,8 @@ export type IconName =
   | "warning"
   | "info"
   | "arrowRight"
+  | "arrowLeft"
+  | "arrowUp"
   | "chevronRight"
   | "chevronDown"
   | "camera"
@@ -61,6 +63,8 @@ export type IconName =
   | "share";
 
 const paths: Record<IconName, ReactNode> = {
+  arrowLeft: <path d="M20 12H4m7-7-7 7 7 7" />,
+  arrowUp: <path d="M12 20V4m-7 7 7-7 7 7" />,
   home: <><path d="M3 11.5 12 4l9 7.5" /><path d="M5 10v10h5v-6h4v6h5V10" /></>,
   gallery: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m3 16 5-5 4 4 3-3 6 6" /><path d="M16.5 8.5h.01" /></>,
   video: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m10 9 5 3-5 3Z" /></>,

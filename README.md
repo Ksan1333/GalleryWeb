@@ -10,7 +10,7 @@ provided through a versioned migration archive rather than shared source code
 or direct access to Android's Room database.
 
 版ごとの追加機能と修正内容は[更新履歴](CHANGELOG.md)で確認できます。
-現在版の全体仕様は[アプリ仕様書 v0.1.37](docs/APP_SPECIFICATION_v0.1.37.md)を参照してください。
+現在版の全体仕様は[アプリ仕様書 v0.2.0](docs/APP_SPECIFICATION_v0.2.0.md)を参照してください。
 
 ## インストールと起動（利用者向け）
 

@@ -86,7 +86,10 @@ pub fn add_library_root(state: &AppState, input_path: &str) -> Result<LibraryRoo
     let id = Uuid::new_v4().to_string();
     let now = now_millis();
 
-    let connection = state.database.lock()?;
+    let mut database = state.database.lock()?;
+    let connection = database
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| error.to_string())?;
     connection
         .execute(
             "INSERT INTO library_roots(id, path, display_name, enabled, created_at, updated_at)
@@ -99,8 +102,43 @@ pub fn add_library_root(state: &AppState, input_path: &str) -> Result<LibraryRoo
         )
         .map_err(|error| format!("Failed to register library root: {error}"))?;
 
-    query_library_root_by_path(&connection, &path)?
-        .ok_or_else(|| "The registered library root could not be read back".to_owned())
+    let root = query_library_root_by_path(&connection, &path)?
+        .ok_or_else(|| "The registered library root could not be read back".to_owned())?;
+    // A newly promoted child owns its existing media IDs. Moving the catalog
+    // scope (not files) preserves tags/favorites and prevents duplicate rows.
+    if root.id == id {
+        let ancestors = {
+            let mut statement = connection
+                .prepare("SELECT id, path FROM library_roots WHERE id <> ?1")
+                .map_err(|error| error.to_string())?;
+            statement
+                .query_map([&root.id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?
+        };
+        for (ancestor_id, ancestor_path) in ancestors {
+            let Ok(relative) = canonical.strip_prefix(&ancestor_path) else {
+                continue;
+            };
+            let prefix = format!("{}/", relative.to_string_lossy().replace('\\', "/"));
+            let pattern = format!(
+                "{}%",
+                prefix
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
+            );
+            connection.execute("UPDATE media_items SET root_id = ?1, relative_path = substr(relative_path, ?2 + 1) WHERE root_id = ?3 AND relative_path LIKE ?4 ESCAPE '\\'",
+                params![root.id, prefix.chars().count() as i64, ancestor_id, pattern]).map_err(|error| error.to_string())?;
+        }
+    }
+    let result = query_library_root_by_path(&connection, &path)?
+        .ok_or_else(|| "Folder catalog not found".to_owned())?;
+    connection.commit().map_err(|error| error.to_string())?;
+    Ok(result)
 }
 
 pub fn list_library_roots(state: &AppState) -> Result<Vec<LibraryRoot>, String> {
@@ -108,9 +146,10 @@ pub fn list_library_roots(state: &AppState) -> Result<Vec<LibraryRoot>, String> 
     let mut statement = connection
         .prepare(
             "SELECT r.id, r.path, r.display_name, r.enabled,
-                    COUNT(m.id) AS item_count,
+                    COALESCE(SUM(CASE WHEN m.is_missing = 0 THEN 1 ELSE 0 END), 0) AS item_count,
                     COALESCE(SUM(CASE WHEN m.is_missing = 1 THEN 1 ELSE 0 END), 0) AS missing_count,
-                    r.created_at, r.updated_at
+                    r.created_at, r.updated_at,
+                    COALESCE((SELECT value_json FROM preferences WHERE key = 'folder.priority.' || r.id), 'true') != 'false'
              FROM library_roots r
              LEFT JOIN media_items m ON m.root_id = r.id
              GROUP BY r.id
@@ -147,16 +186,101 @@ pub fn remove_library_root(state: &AppState, root_id: &str) -> Result<MutationRe
 }
 
 pub fn scan_library(state: &AppState, root_id: Option<&str>) -> Result<ScanReport, String> {
-    let roots = get_root_records(state, root_id)?;
+    let all_roots = get_root_records(state, None)?;
+    let selected = root_id.and_then(|id| all_roots.iter().find(|root| root.id == id));
+    let mut roots = all_roots
+        .iter()
+        .filter(|root| {
+            root_id.is_none()
+                || Some(root.id.as_str()) == root_id
+                || selected.is_some_and(|parent| {
+                    parent.is_priority && Path::new(&root.path).starts_with(&parent.path)
+                })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    roots.sort_by_key(|root| !root.is_priority);
     if roots.is_empty() && root_id.is_some() {
         return Err("The requested enabled library root was not found".to_owned());
     }
 
     let mut results = Vec::with_capacity(roots.len());
+    let visited = get_preferences(state)?
+        .into_iter()
+        .filter(|entry| entry.key.starts_with("folder.visited."))
+        .collect::<Vec<_>>();
     for root in roots {
-        results.push(scan_one_root(state, root)?);
+        let recursive = all_roots
+            .iter()
+            .any(|parent| parent.is_priority && Path::new(&root.path).starts_with(&parent.path));
+        match scan_root_scope(state, root.clone(), None, recursive) {
+            Ok(result) => results.push(result),
+            Err(error) if root_id.is_none() => results.push(RootScanResult {
+                root_id: root.id.clone(),
+                scanned_files: 0,
+                supported_files: 0,
+                inserted: 0,
+                updated: 0,
+                missing: 0,
+                issues: vec![ScanIssue {
+                    path: root.path.clone(),
+                    message: error,
+                }],
+            }),
+            Err(error) => return Err(error),
+        }
+        if !recursive {
+            for entry in &visited {
+                if entry.value["rootId"].as_str() != Some(root.id.as_str()) {
+                    continue;
+                }
+                let Some(folder) = entry.value["relativeFolder"]
+                    .as_str()
+                    .filter(|folder| !folder.is_empty())
+                else {
+                    continue;
+                };
+                if let Ok(result) = scan_root_scope(state, root.clone(), Some(folder), false) {
+                    results.push(result);
+                }
+            }
+        }
     }
     Ok(ScanReport::from_roots(results))
+}
+
+/// Priority is a preference, not ownership of files. Removing priority must
+/// retain catalog IDs, favorites, tags, and previously browsed media.
+pub fn set_root_priority(state: &AppState, root_id: &str, priority: bool) -> Result<(), String> {
+    let connection = state.database.lock()?;
+    let exists = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM library_roots WHERE id = ?1)",
+            [root_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !exists {
+        return Err("Folder catalog not found".to_owned());
+    }
+    connection.execute(
+        "INSERT INTO preferences(key, value_json, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
+        params![format!("folder.priority.{root_id}"), if priority { "true" } else { "false" }, now_millis()],
+    ).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn scan_folder(
+    state: &AppState,
+    root_id: &str,
+    folder: &str,
+) -> Result<RootScanResult, String> {
+    let root = get_root_records(state, Some(root_id))?
+        .into_iter()
+        .next()
+        .ok_or("Folder catalog not found")?;
+    scan_root_scope(state, root, Some(folder), false)
 }
 
 /// Repairs the legacy state produced when a removable or slow drive briefly
@@ -233,16 +357,10 @@ pub(crate) fn recover_suspicious_missing_media(
             continue;
         }
 
-        let connection = state.database.lock()?;
-        let affected = connection
-            .execute(
-                "UPDATE media_items
-                 SET is_missing = 0, updated_at = ?2
-                 WHERE root_id = ?1 AND is_missing = 1",
-                params![root_id, now_millis()],
-            )
-            .map_err(|error| format!("Failed to restore present media records: {error}"))?;
-        recovered.push((root_id, affected as u64));
+        // A live sample is not proof that every missing file has returned.
+        // Reconcile real paths so actually deleted files cannot reappear.
+        let result = scan_library(state, Some(&root_id))?;
+        recovered.push((root_id, result.updated));
     }
     Ok(recovered)
 }
@@ -257,11 +375,6 @@ fn should_recover_suspicious_missing_root(
         && missing_count.saturating_mul(2) > total_count
         && sample_count >= SUSPICIOUS_MISSING_SAMPLE_MINIMUM
         && sample_present.saturating_mul(4) >= sample_count.saturating_mul(3)
-}
-
-fn scan_result_has_suspicious_mass_drop(previous_active: u64, scanned_supported: u64) -> bool {
-    previous_active >= MASS_MISSING_GUARD_MIN_ITEMS
-        && scanned_supported.saturating_mul(2) < previous_active
 }
 
 pub fn list_media_items(
@@ -1382,7 +1495,12 @@ pub fn reconcile_media_load_failure(state: &AppState, media_id: &str) -> Result<
     Ok(mark_media_ids_missing(state, &[media_id.to_owned()])? > 0)
 }
 
-fn scan_one_root(state: &AppState, root: LibraryRootRecord) -> Result<RootScanResult, String> {
+fn scan_root_scope(
+    state: &AppState,
+    root: LibraryRootRecord,
+    folder: Option<&str>,
+    recursive: bool,
+) -> Result<RootScanResult, String> {
     let root_path = PathBuf::from(&root.path);
     let mut issues = Vec::new();
     if !root.enabled {
@@ -1403,21 +1521,66 @@ fn scan_one_root(state: &AppState, root: LibraryRootRecord) -> Result<RootScanRe
             ));
         }
     };
-    let previous_active = {
-        let connection = state.database.lock()?;
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM media_items WHERE root_id = ?1 AND is_missing = 0",
-                [&root.id],
-                |row| row.get::<_, i64>(0),
+    let relative_folder = folder.unwrap_or("").replace('\\', "/");
+    if Path::new(&relative_folder).is_absolute()
+        || Path::new(&relative_folder).components().any(|part| {
+            matches!(
+                part,
+                Component::ParentDir | Component::Prefix(_) | Component::RootDir
             )
-            .map(nonnegative_u64)
-            .map_err(|error| format!("Failed to count active media before scan: {error}"))?
+        })
+    {
+        return Err("Invalid folder path".to_owned());
+    }
+    let scan_path = canonical_root.join(&relative_folder);
+    let prefix = if relative_folder.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", relative_folder.trim_end_matches('/'))
+    };
+    let nested_roots = get_root_records(state, None)?
+        .into_iter()
+        .filter(|candidate| {
+            candidate.id != root.id && Path::new(&candidate.path).starts_with(&canonical_root)
+        })
+        .map(|candidate| PathBuf::from(candidate.path))
+        .collect::<Vec<_>>();
+    let existing_paths = {
+        let connection = state.database.lock()?;
+        let mut statement = connection.prepare("SELECT id, relative_path FROM media_items WHERE root_id = ?1 AND is_missing = 0 AND relative_path LIKE ?2 ESCAPE '\\'")
+            .map_err(|error| error.to_string())?;
+        let pattern = format!(
+            "{}%",
+            prefix
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        statement
+            .query_map(params![root.id, pattern], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|(_, path)| {
+                path.starts_with(&prefix)
+                    && (recursive || folder.is_none() || !path[prefix.len()..].contains('/'))
+            })
+            .collect::<Vec<_>>()
     };
 
     let mut scanned_files = 0_u64;
     let mut candidates = Vec::new();
-    for entry in WalkDir::new(&canonical_root).follow_links(false) {
+    let walk = WalkDir::new(&scan_path)
+        .follow_links(false)
+        .max_depth(if recursive { usize::MAX } else { 1 });
+    for entry in walk.into_iter().filter_entry(|entry| {
+        !nested_roots
+            .iter()
+            .any(|nested| entry.path().starts_with(nested))
+    }) {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -1448,48 +1611,55 @@ fn scan_one_root(state: &AppState, root: LibraryRootRecord) -> Result<RootScanRe
             ),
         }
     }
-    if scan_result_has_suspicious_mass_drop(previous_active, candidates.len() as u64) {
-        push_scan_issue(
-            &mut issues,
-            root.path.clone(),
-            format!(
-                "Scan completeness guard preserved missing state: found {} of {} previously visible media",
-                candidates.len(),
-                previous_active
-            ),
-        );
-    }
+    let seen = candidates
+        .iter()
+        .map(|candidate| candidate.relative_path.to_lowercase())
+        .collect::<HashSet<_>>();
+    // Never infer deletion merely from an incomplete enumeration. Conversely,
+    // one inaccessible sibling must not keep confirmed deleted files visible.
+    let mut directory_entries = HashMap::new();
+    let missing_ids = existing_paths
+        .iter()
+        .filter(|(_, path)| !seen.contains(&path.to_lowercase()))
+        .filter(|(_, path)| {
+            confirmed_missing_cached(
+                &canonical_root,
+                &canonical_root.join(path),
+                &mut directory_entries,
+            )
+        })
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
 
+    reconcile_candidates(
+        state,
+        root,
+        candidates,
+        missing_ids,
+        scanned_files,
+        issues,
+        true,
+    )
+}
+
+fn reconcile_candidates(
+    state: &AppState,
+    root: LibraryRootRecord,
+    candidates: Vec<ScanCandidate>,
+    missing_ids: Vec<String>,
+    scanned_files: u64,
+    issues: Vec<ScanIssue>,
+    count_missing_total: bool,
+) -> Result<RootScanResult, String> {
     let mut connection = state.database.lock()?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| format!("Failed to start scan reconciliation: {error}"))?;
-    transaction
-        .execute_batch(
-            "CREATE TEMP TABLE IF NOT EXISTS scan_seen_paths (
-                relative_path TEXT PRIMARY KEY COLLATE NOCASE
-             ) WITHOUT ROWID;
-             DELETE FROM scan_seen_paths;",
-        )
-        .map_err(|error| format!("Failed to prepare scan reconciliation: {error}"))?;
-    let previous_seen: i64 = transaction
-        .query_row(
-            "SELECT COALESCE(MAX(last_seen_at), 0) FROM media_items WHERE root_id = ?1",
-            [&root.id],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("Failed to read scan generation: {error}"))?;
-    let scan_token = now_millis().max(previous_seen.saturating_add(1));
+    let scan_token = now_millis();
     let mut inserted = 0_u64;
     let mut updated = 0_u64;
 
     for candidate in &candidates {
-        transaction
-            .execute(
-                "INSERT OR IGNORE INTO scan_seen_paths(relative_path) VALUES (?1)",
-                [&candidate.relative_path],
-            )
-            .map_err(|error| format!("Failed to record scanned media: {error}"))?;
         let existing: Option<(
             String,
             String,
@@ -1600,29 +1770,27 @@ fn scan_one_root(state: &AppState, root: LibraryRootRecord) -> Result<RootScanRe
         }
     }
 
-    if issues.is_empty() {
+    for id in &missing_ids {
         transaction
             .execute(
                 "UPDATE media_items
                  SET is_missing = 1, updated_at = ?2
-                 WHERE root_id = ?1
-                   AND is_missing = 0
-                   AND NOT EXISTS (
-                       SELECT 1
-                       FROM scan_seen_paths seen
-                       WHERE seen.relative_path = media_items.relative_path COLLATE NOCASE
-                   )",
-                params![root.id, scan_token],
+                 WHERE id = ?1 AND is_missing = 0",
+                params![id, scan_token],
             )
             .map_err(|error| format!("Failed to mark missing media: {error}"))?;
     }
-    let missing: i64 = transaction
-        .query_row(
-            "SELECT COUNT(*) FROM media_items WHERE root_id = ?1 AND is_missing = 1",
-            [&root.id],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("Failed to count missing media: {error}"))?;
+    let missing: i64 = if count_missing_total {
+        transaction
+            .query_row(
+                "SELECT COUNT(*) FROM media_items WHERE root_id = ?1 AND is_missing = 1",
+                [&root.id],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("Failed to count missing media: {error}"))?
+    } else {
+        missing_ids.len() as i64
+    };
     transaction
         .commit()
         .map_err(|error| format!("Failed to commit scan: {error}"))?;
@@ -1636,6 +1804,153 @@ fn scan_one_root(state: &AppState, root: LibraryRootRecord) -> Result<RootScanRe
         missing: nonnegative_u64(missing),
         issues,
     })
+}
+
+/// Confirm absence against a readable ancestor, preserving disconnected
+/// volumes, permission failures and paths escaping the catalog boundary.
+pub(crate) fn confirmed_missing_path(root: &Path, path: &Path) -> bool {
+    confirmed_missing_cached(root, path, &mut HashMap::new())
+}
+
+fn confirmed_missing_cached(
+    root: &Path,
+    path: &Path,
+    cache: &mut HashMap<PathBuf, Option<HashSet<String>>>,
+) -> bool {
+    if !path.starts_with(root) || !root.is_dir() {
+        return false;
+    }
+    match std::fs::metadata(path) {
+        Ok(metadata) => return !metadata.is_file(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return false,
+    }
+    let mut absent = path;
+    while let Some(parent) = absent.parent() {
+        if !parent.starts_with(root) {
+            return false;
+        }
+        if !cache.contains_key(parent) {
+            match std::fs::read_dir(parent) {
+                Ok(entries) => {
+                    let names = entries
+                        .map(|entry| {
+                            entry.map(|entry| entry.file_name().to_string_lossy().to_lowercase())
+                        })
+                        .collect::<Result<HashSet<_>, _>>()
+                        .ok();
+                    cache.insert(parent.to_path_buf(), names);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    absent = parent;
+                    continue;
+                }
+                Err(_) => return false,
+            }
+        }
+        let Some(name) = absent.file_name() else {
+            return false;
+        };
+        return cache
+            .get(parent)
+            .and_then(|names| names.as_ref())
+            .is_some_and(|names| !names.contains(&name.to_string_lossy().to_lowercase()));
+    }
+    false
+}
+
+/// Normalize notify's regular Windows paths and the catalog's extended paths
+/// identically. Keep the relative suffix's original spelling for filesystem IO.
+pub(crate) fn relative_event_path(root: &Path, path: &Path) -> Option<String> {
+    fn normalize(path: &Path) -> String {
+        let value = path.to_string_lossy().replace('\\', "/");
+        if let Some(value) = value.strip_prefix("//?/UNC/") {
+            format!("//{value}")
+        } else {
+            value.strip_prefix("//?/").unwrap_or(&value).to_owned()
+        }
+    }
+    let root = normalize(root).trim_end_matches('/').to_owned();
+    let path = normalize(path);
+    let prefix = format!("{root}/");
+    if path.eq_ignore_ascii_case(&root) {
+        Some(String::new())
+    } else if path
+        .get(..prefix.len())
+        .is_some_and(|value| value.eq_ignore_ascii_case(&prefix))
+    {
+        Some(path[prefix.len()..].to_owned())
+    } else {
+        None
+    }
+}
+
+/// Common file events update just the affected records, not a 220k-item root.
+/// Directory events reconcile only that subtree. Rename events contain both paths.
+pub(crate) fn reconcile_changed_paths(
+    state: &AppState,
+    root_id: &str,
+    paths: &[PathBuf],
+) -> Result<ScanReport, String> {
+    let root = get_root_records(state, Some(root_id))?
+        .into_iter()
+        .next()
+        .ok_or("Folder catalog not found")?;
+    let root_path = Path::new(&root.path);
+    if !root_path.is_dir() {
+        return Err("Folder is temporarily unavailable".to_owned());
+    }
+    let mut candidates = Vec::new();
+    let mut missing_ids = Vec::new();
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    let mut directory_entries = HashMap::new();
+    let recursive = get_root_records(state, None)?
+        .iter()
+        .any(|parent| parent.is_priority && root_path.starts_with(&parent.path));
+    for path in paths {
+        let Some(relative) = relative_event_path(root_path, path) else {
+            continue;
+        };
+        if !seen.insert(relative.to_lowercase()) {
+            continue;
+        }
+        let path = root_path.join(&relative);
+        let has_catalog_children = if !path.exists() {
+            let connection = state.database.lock()?;
+            connection.query_row("SELECT EXISTS(SELECT 1 FROM media_items WHERE root_id = ?1 AND relative_path LIKE ?2 ESCAPE '\\')",
+                params![root_id, format!("{}/%", escape_like(&relative))], |row| row.get::<_, bool>(0)).map_err(|error| error.to_string())?
+        } else {
+            false
+        };
+        if path.is_dir() || has_catalog_children {
+            results.push(scan_root_scope(
+                state,
+                root.clone(),
+                Some(&relative),
+                recursive || has_catalog_children,
+            )?);
+        } else if let Some((kind, extension, mime)) = classify_media(&path) {
+            if path.is_file() {
+                candidates.push(scan_candidate(root_path, &path, kind, extension, mime)?);
+            } else if confirmed_missing_cached(root_path, &path, &mut directory_entries) {
+                let connection = state.database.lock()?;
+                let id = connection.query_row("SELECT id FROM media_items WHERE root_id = ?1 AND relative_path = ?2 AND is_missing = 0", params![root_id, relative], |row| row.get::<_, String>(0))
+                    .optional().map_err(|error| error.to_string())?;
+                missing_ids.extend(id);
+            }
+        }
+    }
+    results.push(reconcile_candidates(
+        state,
+        root,
+        candidates,
+        missing_ids,
+        paths.len() as u64,
+        Vec::new(),
+        false,
+    )?);
+    Ok(ScanReport::from_roots(results))
 }
 
 fn scan_candidate(
@@ -1692,7 +2007,8 @@ fn get_root_records(
     if let Some(root_id) = root_id {
         let record = connection
             .query_row(
-                "SELECT id, path, display_name, enabled
+                "SELECT id, path, display_name, enabled,
+                        COALESCE((SELECT value_json FROM preferences WHERE key = 'folder.priority.' || library_roots.id), 'true') != 'false'
                  FROM library_roots
                  WHERE id = ?1 AND enabled = 1",
                 [root_id],
@@ -1702,6 +2018,7 @@ fn get_root_records(
                         path: row.get(1)?,
                         display_name: row.get(2)?,
                         enabled: row.get(3)?,
+                        is_priority: row.get(4)?,
                     })
                 },
             )
@@ -1713,7 +2030,8 @@ fn get_root_records(
     } else {
         let mut statement = connection
             .prepare(
-                "SELECT id, path, display_name, enabled
+                "SELECT id, path, display_name, enabled,
+                        COALESCE((SELECT value_json FROM preferences WHERE key = 'folder.priority.' || library_roots.id), 'true') != 'false'
                  FROM library_roots
                  WHERE enabled = 1
                  ORDER BY created_at",
@@ -1726,6 +2044,7 @@ fn get_root_records(
                     path: row.get(1)?,
                     display_name: row.get(2)?,
                     enabled: row.get(3)?,
+                    is_priority: row.get(4)?,
                 })
             })
             .map_err(|error| format!("Failed to query scan roots: {error}"))?
@@ -1742,9 +2061,10 @@ fn query_library_root_by_path(
     connection
         .query_row(
             "SELECT r.id, r.path, r.display_name, r.enabled,
-                    COUNT(m.id),
+                    COALESCE(SUM(CASE WHEN m.is_missing = 0 THEN 1 ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN m.is_missing = 1 THEN 1 ELSE 0 END), 0),
-                    r.created_at, r.updated_at
+                    r.created_at, r.updated_at,
+                    COALESCE((SELECT value_json FROM preferences WHERE key = 'folder.priority.' || r.id), 'true') != 'false'
              FROM library_roots r
              LEFT JOIN media_items m ON m.root_id = r.id
              WHERE r.path = ?1
@@ -1766,6 +2086,7 @@ fn library_root_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryRoo
         missing_count: nonnegative_u64(row.get(5)?),
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
+        is_priority: row.get(8)?,
     })
 }
 
@@ -2203,11 +2524,80 @@ mod tests {
     }
 
     #[test]
-    fn mass_drop_guard_preserves_previous_visibility() {
-        assert!(scan_result_has_suspicious_mass_drop(220_000, 15_000));
-        assert!(scan_result_has_suspicious_mass_drop(1_000, 499));
-        assert!(!scan_result_has_suspicious_mass_drop(999, 0));
-        assert!(!scan_result_has_suspicious_mass_drop(10_000, 5_000));
+    fn confirmed_mass_deletion_is_not_hidden_by_a_completeness_guard() {
+        let directory = tempdir().unwrap();
+        for index in 0..1_010 {
+            fs::write(directory.path().join(format!("{index}.jpg")), b"image").unwrap();
+        }
+        let state = initialized_state();
+        let root = add_library_root(&state, directory.path().to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        for index in 0..1_000 {
+            fs::remove_file(directory.path().join(format!("{index}.jpg"))).unwrap();
+        }
+        let result = scan_library(&state, Some(&root.id)).unwrap();
+        assert_eq!(result.missing, 1_000);
+        assert_eq!(list_media_items(&state, None).unwrap().len(), 10);
+    }
+
+    #[test]
+    fn incremental_changes_handle_modify_rename_and_deleted_subtrees() {
+        let directory = tempdir().unwrap();
+        let nested = directory.path().join("folder.jpg");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("a.jpg"), b"image").unwrap();
+        let source = directory.path().join("one.jpg");
+        fs::write(&source, b"one").unwrap();
+        let state = initialized_state();
+        let root = add_library_root(&state, directory.path().to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        let original = list_media_items(&state, None)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.file_name == "one.jpg")
+            .unwrap();
+        set_favorite(&state, &original.id, true).unwrap();
+        fs::write(&source, b"changed content").unwrap();
+        assert_eq!(
+            reconcile_changed_paths(&state, &root.id, &[source.clone()])
+                .unwrap()
+                .updated,
+            1
+        );
+        let changed = list_media_items(&state, None)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == original.id)
+            .unwrap();
+        assert!(changed.is_favorite);
+        assert_eq!(changed.byte_size, 15);
+        let renamed = directory.path().join("renamed.jpg");
+        fs::rename(&source, &renamed).unwrap();
+        reconcile_changed_paths(&state, &root.id, &[source, renamed]).unwrap();
+        fs::remove_file(nested.join("a.jpg")).unwrap();
+        fs::remove_dir(&nested).unwrap();
+        reconcile_changed_paths(&state, &root.id, &[nested]).unwrap();
+        let items = list_media_items(&state, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].file_name, "renamed.jpg");
+    }
+
+    #[test]
+    fn offline_root_does_not_mark_catalog_files_missing() {
+        let directory = tempdir().unwrap();
+        let root_path = directory.path().join("volume");
+        fs::create_dir(&root_path).unwrap();
+        fs::write(root_path.join("a.jpg"), b"a").unwrap();
+        let state = initialized_state();
+        let root = add_library_root(&state, root_path.to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        fs::rename(&root_path, directory.path().join("offline")).unwrap();
+        assert!(!confirmed_missing_path(
+            &root_path,
+            &root_path.join("a.jpg")
+        ));
+        assert!(scan_library(&state, Some(&root.id)).is_err());
+        assert_eq!(list_media_items(&state, None).unwrap().len(), 1);
     }
 
     #[test]

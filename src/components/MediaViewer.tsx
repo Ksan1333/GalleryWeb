@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useViewerFullscreen } from "../hooks/useViewerFullscreen";
 import type {
   PDFDocumentLoadingTask,
   PDFDocumentProxy,
@@ -301,6 +302,7 @@ export type MediaViewerProps = {
   currentId: string;
   collection?: {
     query: MediaQuery;
+    revision?: number;
     totalCount: number;
     currentIndex: number;
     indexedItems: Array<[number, MediaItem]>;
@@ -3064,7 +3066,7 @@ export function MediaViewer({
   const translateTag = useTagTranslations();
   const [activeId, setActiveId] = useState(currentId);
   const [recommendationItems, setRecommendationItems] = useState<MediaItem[]>([]);
-  const collectionKey = collection ? JSON.stringify(collection.query) : "";
+  const collectionKey = collection ? JSON.stringify([collection.query, collection.revision]) : "";
   const [collectionItems, setCollectionItems] = useState<Map<number, MediaItem>>(
     () => new Map(collection?.indexedItems ?? []),
   );
@@ -3120,8 +3122,8 @@ export function MediaViewer({
   const [busyAction, setBusyAction] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [menusHidden, setMenusHidden] = useState(false);
+  const { isFullscreen, changeFullscreen } = useViewerFullscreen(viewerShellRef);
+  const menusHidden = isFullscreen;
   const [runtimeMetadata, setRuntimeMetadata] = useState<ViewerRuntimeMetadata>({});
   const [infoLayout, setInfoLayout] = useState<ViewerInfoLayout>("sidebar");
   const [recommendSheetOpen, setRecommendSheetOpen] = useState(true);
@@ -3520,22 +3522,8 @@ export function MediaViewer({
   }, []);
 
   useEffect(() => {
-    const syncFullscreenState = () => {
-      const fullscreen = document.fullscreenElement === viewerShellRef.current;
-      setIsFullscreen(fullscreen);
-      setMenusHidden(fullscreen);
-      if (fullscreen) {
-        setShowBookSettings(false);
-        setShowBookmarkList(false);
-      }
-    };
-    document.addEventListener("fullscreenchange", syncFullscreenState);
-    syncFullscreenState();
-    return () => {
-      document.removeEventListener("fullscreenchange", syncFullscreenState);
-      if (document.fullscreenElement === viewerShellRef.current) void document.exitFullscreen();
-    };
-  }, []);
+    if (isFullscreen) { setShowBookSettings(false); setShowBookmarkList(false); }
+  }, [isFullscreen]);
 
   useEffect(() => {
     let active = true;
@@ -3590,9 +3578,9 @@ export function MediaViewer({
     document.body.style.overflow = "hidden";
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (document.fullscreenElement === viewerShellRef.current) {
+        if (isFullscreen) {
           event.preventDefault();
-          void document.exitFullscreen();
+          void changeFullscreen(false).catch((caught: unknown) => setError(String(caught)));
         } else if (showGifFrames) closeGifFrames();
         else if (showTagEditor) setShowTagEditor(false);
         else if (showBookmarkList) setShowBookmarkList(false);
@@ -3624,7 +3612,7 @@ export function MediaViewer({
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [bookViewMode, closeGifFrames, infoLayout, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds]);
+  }, [bookViewMode, changeFullscreen, isFullscreen, closeGifFrames, infoLayout, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds]);
 
   useEffect(() => {
     if (!message) return;
@@ -3666,17 +3654,7 @@ export function MediaViewer({
 
   const toggleFullscreen = () => {
     setError(undefined);
-    if (!document.fullscreenEnabled) {
-      setError("この環境では全画面表示を利用できません。");
-      return;
-    }
-    if (document.fullscreenElement === viewerShellRef.current) {
-      void document.exitFullscreen().catch((fullscreenError: unknown) => {
-        setError(fullscreenError instanceof Error ? fullscreenError.message : "全画面表示を終了できませんでした。");
-      });
-      return;
-    }
-    void viewerShellRef.current?.requestFullscreen().catch((fullscreenError: unknown) => {
+    void changeFullscreen().catch((fullscreenError: unknown) => {
       setError(fullscreenError instanceof Error ? fullscreenError.message : "全画面表示を開始できませんでした。");
     });
   };
@@ -3947,11 +3925,10 @@ export function MediaViewer({
 
   const extractGifFrames = () => {
     const openFramePopup = () => {
-      setIsFullscreen(false);
       startGifFrameExtraction();
     };
-    if (document.fullscreenElement === viewerShellRef.current) {
-      void document.exitFullscreen()
+    if (isFullscreen) {
+      void changeFullscreen(false)
         .then(openFramePopup)
         .catch((fullscreenError: unknown) => {
           setError(fullscreenError instanceof Error
@@ -4178,11 +4155,11 @@ export function MediaViewer({
           <button
             type="button"
             className="pv-viewer-menu-restore"
-            aria-label="コントロールパネルを表示"
-            title="コントロールパネルを表示"
-            onClick={() => setMenusHidden(false)}
+            aria-label="全画面表示を終了（Esc）"
+            title="全画面表示を終了（Esc）"
+            onClick={toggleFullscreen}
           >
-            <Icon name="eye" />
+            <Icon name="fullscreenExit" />
           </button>
         )}
         {isImage && imageContextMenu && (
@@ -4228,13 +4205,6 @@ export function MediaViewer({
                 </button>
               ))}
             </div>
-            {(isImage || item.kind === "video" || isBook) && (
-              <IconControl
-                icon="eyeOff"
-                label="コントロールパネルを非表示"
-                onClick={() => setMenusHidden(true)}
-              />
-            )}
             {(isImage || item.kind === "video" || isBook) && (
               <IconControl
                 icon={isFullscreen ? "fullscreenExit" : "fullscreen"}

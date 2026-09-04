@@ -97,7 +97,7 @@ export function HomePage({
           <div className="hero-actions">
             <button className="primary-button" type="button" onClick={onAddFolder} disabled={busy || !nativeAvailable}>
               <Icon name="folderPlus" />
-              メディアフォルダーを追加
+              メディア優先フォルダーを追加
             </button>
             <button className="secondary-button" type="button" onClick={() => onScan()} disabled={busy || roots.length === 0}>
               <Icon name="refresh" className={busy ? "rotating" : undefined} />
@@ -208,7 +208,7 @@ export function HomePage({
       <section className="library-roots-card" aria-labelledby="root-title">
         <div>
           <p className="kicker">WATCHED FOLDERS</p>
-          <h2 id="root-title">登録フォルダー</h2>
+          <h2 id="root-title">優先フォルダー</h2>
           <p>最終スキャン: {formatDate(summary.lastScannedAt)}</p>
         </div>
         {roots.length === 0 ? (
@@ -627,7 +627,7 @@ export function SettingsPage({
             </button>
           </div>
           {roots.length === 0 ? (
-            <EmptyState icon="folder" title="登録フォルダーはありません" description="Windowsアプリでフォルダーを選択してください。" />
+            <EmptyState icon="folder" title="優先フォルダーはありません" description="Windowsアプリでフォルダーを選択してください。" />
           ) : (
             <div className="folder-list">
               {roots.map((root) => (
@@ -642,7 +642,7 @@ export function SettingsPage({
                     <button type="button" aria-label={`${root.displayName}を再スキャン`} onClick={() => onScan(root.id)} disabled={busy}>
                       <Icon name="refresh" />
                     </button>
-                    <button type="button" aria-label={`${root.displayName}の登録を解除`} onClick={() => onRemoveRoot(root)} disabled={busy}>
+                    <button type="button" aria-label={`${root.displayName}の優先指定を解除`} onClick={() => onRemoveRoot(root)} disabled={busy}>
                       <Icon name="trash" />
                     </button>
                   </div>
@@ -651,7 +651,7 @@ export function SettingsPage({
             </div>
           )}
           <p className="section-note">
-            登録解除はカタログから監視対象を外す操作です。元のフォルダーやファイルは削除しません。
+            優先指定の解除では、ファイル・タグ・お気に入りを保持します。閲覧した場所の監視は継続します。
           </p>
         </section>
 
@@ -671,7 +671,7 @@ export function SettingsPage({
           {diagnostics && (
             <div className="diagnostics-grid">
               <div><span>カタログ</span><strong>{formatBytes(diagnostics.databaseBytes + diagnostics.walBytes)}</strong></div>
-              <div><span>登録フォルダー</span><strong>{formatCount(diagnostics.rootCount)}</strong></div>
+              <div><span>優先フォルダー</span><strong>{formatCount(diagnostics.rootCount)}</strong></div>
               <div><span>メディア</span><strong>{formatCount(diagnostics.mediaCount)}</strong></div>
               <div><span>欠損記録</span><strong>{formatCount(diagnostics.missingMediaCount)}</strong></div>
               <div><span>外部キー問題</span><strong>{formatCount(diagnostics.foreignKeyIssues)}</strong></div>
@@ -813,8 +813,8 @@ export function SettingsPage({
                 onChange={(value) => void updatePreference("confirmBeforeRecycle", value)}
               />
               <PreferenceSwitch
-                label="登録フォルダーを監視"
-                description="変更を検出してカタログ更新の対象にする"
+                label="ファイル変更を自動反映"
+                description="優先フォルダーの配下と、閲覧したフォルダーを監視"
                 checked={preferences.watchFolders}
                 disabled={savingKey === "watchFolders"}
                 onChange={(value) => void updatePreference("watchFolders", value)}
@@ -873,7 +873,7 @@ export function SettingsPage({
           </div>
           <p>
             Android版が出力したチェックサム付きZIPを検証して取り込みます。タグ、お気に入り、設定、しおり、資料、X保存履歴が対象です。
-            メディア本体は登録フォルダー内のファイルと照合します。
+            メディア本体は優先フォルダー内のファイルと照合します。
           </p>
           <ol>
             <li><span>1</span>Android版でWindows移行用データを書き出す</li>

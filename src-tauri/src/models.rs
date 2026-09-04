@@ -31,6 +31,7 @@ pub struct LibraryRoot {
     pub path: String,
     pub display_name: String,
     pub enabled: bool,
+    pub is_priority: bool,
     pub item_count: u64,
     pub missing_count: u64,
     pub created_at: i64,
@@ -43,6 +44,7 @@ pub(crate) struct LibraryRootRecord {
     pub path: String,
     pub display_name: String,
     pub enabled: bool,
+    pub is_priority: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

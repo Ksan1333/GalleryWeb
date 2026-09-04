@@ -17,12 +17,12 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{ai, background_activity, catalog, db::AppState, media_folders};
+use crate::{ai, catalog, db::AppState, media_folders};
 
 pub const LIBRARY_WATCH_EVENT: &str = "library-watch-updated";
 const PENDING_ANALYSIS_KEY: &str = "watcher.pendingAnalysisIds";
-const CHANGE_STABILITY_DELAY: Duration = Duration::from_millis(1_200);
-const CONTROL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const CHANGE_STABILITY_DELAY: Duration = Duration::from_millis(400);
+const CONTROL_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const AUTO_ANALYSIS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const AUTO_ANALYSIS_BATCH: usize = 64;
 const WATCH_EVENT_BUFFER: usize = 1_024;
@@ -31,6 +31,7 @@ const WATCH_EVENT_BUFFER: usize = 1_024;
 struct WatchedRoot {
     id: String,
     path: PathBuf,
+    recursive: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -87,6 +88,8 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
     let mut preferences = preference_flags(&state);
     let mut watched_roots = HashMap::<String, WatchedRoot>::new();
     let mut pending_changes = HashMap::<String, PendingRootChange>::new();
+    // None means a full reconciliation (startup, reconnect, overflow).
+    let mut pending_paths = HashMap::<String, Option<HashSet<PathBuf>>>::new();
     let mut pending_analysis = load_pending_analysis(&state);
     let mut active_auto_analysis: Option<ActiveAutoAnalysis> = None;
     let mut retry_auto_after = Instant::now();
@@ -103,6 +106,7 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
                 preferences.watch_folders,
                 &mut watched_roots,
                 &mut pending_changes,
+                &mut pending_paths,
             );
             next_control_refresh = now + CONTROL_REFRESH_INTERVAL;
         }
@@ -132,18 +136,23 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
 
         if event_overflowed.swap(false, Ordering::AcqRel) && preferences.watch_folders {
             let received_at = Instant::now();
-            for root_id in watched_roots.keys().cloned().collect::<Vec<_>>() {
+            for root_id in watched_roots
+                .values()
+                .map(|root| root.id.clone())
+                .collect::<HashSet<_>>()
+            {
+                pending_paths.insert(root_id.clone(), None);
                 record_root_change(&mut pending_changes, root_id, received_at, true);
             }
         }
 
         let due_roots = take_stable_root_changes(&mut pending_changes, &watched_roots, now);
         if !due_roots.is_empty() {
-            background_activity::wait_until_quiet(
-                Duration::from_millis(650),
-                Duration::from_millis(100),
-            );
             for (root_id, refresh_hierarchy) in due_roots {
+                let paths = pending_paths
+                    .remove(&root_id)
+                    .flatten()
+                    .map(|paths| paths.into_iter().collect::<Vec<_>>());
                 scan_changed_root(
                     &app,
                     &state,
@@ -151,6 +160,7 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
                     refresh_hierarchy,
                     preferences,
                     &mut pending_analysis,
+                    paths.as_deref(),
                 );
             }
         }
@@ -167,6 +177,28 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
                     let received_at = Instant::now();
                     let refresh_hierarchy = event_changes_folder_hierarchy(&event);
                     for root_id in roots_for_event(&event, &watched_roots) {
+                        if event.need_rescan() || event.paths.is_empty() {
+                            pending_paths.insert(root_id.clone(), None);
+                        } else if let Some(paths) = pending_paths
+                            .entry(root_id.clone())
+                            .or_insert_with(|| Some(HashSet::new()))
+                        {
+                            paths.extend(
+                                event
+                                    .paths
+                                    .iter()
+                                    .filter(|path| {
+                                        watched_roots.values().any(|root| {
+                                            root.id == root_id
+                                                && path_is_within_root(path, &root.path)
+                                        })
+                                    })
+                                    .cloned(),
+                            );
+                            if paths.len() > WATCH_EVENT_BUFFER {
+                                pending_paths.insert(root_id.clone(), None);
+                            }
+                        }
                         record_root_change(
                             &mut pending_changes,
                             root_id,
@@ -176,7 +208,10 @@ fn run(app: AppHandle, database_path: std::path::PathBuf) {
                     }
                 }
             }
-            Ok(Err(error)) => eprintln!("Registered-folder watcher error: {error}"),
+            Ok(Err(error)) => {
+                eprintln!("Folder watcher error: {error}");
+                event_overflowed.store(true, Ordering::Release);
+            }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 eprintln!("Registered-folder watcher stopped unexpectedly");
@@ -192,9 +227,11 @@ fn sync_watched_roots(
     watch_folders: bool,
     watched_roots: &mut HashMap<String, WatchedRoot>,
     pending_changes: &mut HashMap<String, PendingRootChange>,
+    pending_paths: &mut HashMap<String, Option<HashSet<PathBuf>>>,
 ) {
     if !watch_folders {
         unwatch_all(watcher, watched_roots, pending_changes);
+        pending_paths.clear();
         return;
     }
 
@@ -205,18 +242,63 @@ fn sync_watched_roots(
             return;
         }
     };
-    let desired_roots = records
+    let priority_paths = records
+        .iter()
+        .filter(|root| root.is_priority)
+        .map(|root| PathBuf::from(&root.path))
+        .collect::<Vec<_>>();
+    let mut desired_roots = records
         .into_iter()
         .map(|root| {
             (
                 root.id.clone(),
                 WatchedRoot {
+                    recursive: priority_paths
+                        .iter()
+                        .any(|parent| Path::new(&root.path).starts_with(parent)),
                     id: root.id,
                     path: PathBuf::from(root.path),
                 },
             )
         })
         .collect::<HashMap<_, _>>();
+    let owners = desired_roots.values().cloned().collect::<Vec<_>>();
+    if let Ok(preferences) = catalog::get_preferences(state) {
+        for entry in preferences {
+            if !entry.key.starts_with("folder.visited.") {
+                continue;
+            }
+            let Some(root_id) = entry.value["rootId"].as_str() else {
+                continue;
+            };
+            let Some(path) = entry.value["path"].as_str().map(PathBuf::from) else {
+                continue;
+            };
+            let Some(root) = desired_roots.get(root_id) else {
+                continue;
+            };
+            if root.recursive || !path_is_within_root(&path, &root.path) || path == root.path {
+                continue;
+            }
+            if owners
+                .iter()
+                .filter(|owner| path_is_within_root(&path, &owner.path))
+                .max_by_key(|owner| owner.path.components().count())
+                .is_some_and(|owner| owner.id != root_id)
+            {
+                continue;
+            }
+            let id = root_id.to_owned();
+            desired_roots.insert(
+                entry.key,
+                WatchedRoot {
+                    id,
+                    path,
+                    recursive: false,
+                },
+            );
+        }
+    }
 
     let obsolete_ids = watched_roots
         .iter()
@@ -241,8 +323,17 @@ fn sync_watched_roots(
             // control refresh without marking their catalog entries missing.
             continue;
         }
-        match watcher.watch(&root.path, RecursiveMode::Recursive) {
+        match watcher.watch(
+            &root.path,
+            if root.recursive {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            },
+        ) {
             Ok(()) => {
+                record_root_change(pending_changes, root.id.clone(), Instant::now(), true);
+                pending_paths.insert(root.id.clone(), None);
                 watched_roots.insert(root_id, root);
             }
             Err(error) => eprintln!(
@@ -251,7 +342,8 @@ fn sync_watched_roots(
             ),
         }
     }
-    pending_changes.retain(|root_id, _| watched_roots.contains_key(root_id));
+    pending_changes.retain(|root_id, _| watched_roots.values().any(|root| &root.id == root_id));
+    pending_paths.retain(|root_id, _| pending_changes.contains_key(root_id));
 }
 
 fn unwatch_all(
@@ -266,7 +358,26 @@ fn unwatch_all(
 }
 
 fn event_is_relevant(event: &Event) -> bool {
-    event.need_rescan() || !matches!(event.kind, EventKind::Access(_))
+    if event.need_rescan() {
+        return true;
+    }
+    match event.kind {
+        EventKind::Access(_) => false,
+        EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {
+            // A child change also updates the directory's timestamp. That
+            // notification must not turn a one-file edit into a root scan.
+            event.paths.is_empty()
+                || event
+                    .paths
+                    .iter()
+                    .any(|path| !path.is_dir() && catalog::classify_media(path).is_some())
+        }
+        EventKind::Create(CreateKind::File) | EventKind::Remove(RemoveKind::File) => event
+            .paths
+            .iter()
+            .any(|path| catalog::classify_media(path).is_some()),
+        _ => true,
+    }
 }
 
 fn event_changes_folder_hierarchy(event: &Event) -> bool {
@@ -345,7 +456,8 @@ fn record_root_change(
     pending_changes
         .entry(root_id)
         .and_modify(|pending| {
-            pending.changed_at = changed_at;
+            // Keep the first arrival time: a continuous download must not
+            // postpone all updates forever.
             pending.refresh_hierarchy |= refresh_hierarchy;
         })
         .or_insert(PendingRootChange {
@@ -362,12 +474,19 @@ fn take_stable_root_changes(
     let mut due = pending_changes
         .iter()
         .filter_map(|(root_id, pending)| {
-            (watched_roots.contains_key(root_id)
+            (watched_roots.values().any(|root| &root.id == root_id)
                 && now.saturating_duration_since(pending.changed_at) >= CHANGE_STABILITY_DELAY)
                 .then(|| (root_id.clone(), pending.refresh_hierarchy))
         })
         .collect::<Vec<_>>();
-    due.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    due.sort_unstable_by_key(|entry| {
+        (
+            !watched_roots
+                .values()
+                .any(|root| root.id == entry.0 && root.recursive),
+            entry.0.clone(),
+        )
+    });
     for (root_id, _) in &due {
         pending_changes.remove(root_id);
     }
@@ -398,17 +517,29 @@ fn scan_changed_root(
     refresh_hierarchy: bool,
     preferences: WatchPreferences,
     pending_analysis: &mut HashSet<String>,
+    changed_paths: Option<&[PathBuf]>,
 ) {
     let scan_started_at = catalog::now_millis();
-    match catalog::scan_library(state, Some(root_id)) {
+    let result = match changed_paths {
+        Some(paths) => catalog::reconcile_changed_paths(state, root_id, paths)
+            .or_else(|_| catalog::scan_library(state, Some(root_id))),
+        None => catalog::scan_library(state, Some(root_id)),
+    };
+    match result {
         Ok(report) => {
-            let new_ids = query_new_analyzable_ids(state, scan_started_at);
+            let new_ids = if preferences.auto_analyze && report.inserted > 0 {
+                query_new_analyzable_ids(state, scan_started_at)
+            } else {
+                Vec::new()
+            };
             if preferences.auto_analyze && !new_ids.is_empty() {
                 pending_analysis.extend(new_ids);
                 persist_pending_analysis(state, pending_analysis);
             }
             if refresh_hierarchy {
-                let _ = media_folders::refresh_folder_hierarchy_cache(state, Some(root_id));
+                // Invalidate lazily; enumerating the whole hierarchy for each
+                // renamed file defeats incremental event processing.
+                let _ = media_folders::invalidate_folder_hierarchy_cache(state, Some(root_id));
             }
             crate::invalidate_media_presence_cache();
             let _ = app.emit(
@@ -575,6 +706,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn directory_timestamp_updates_do_not_trigger_recursive_scans() {
+        let directory = tempfile::tempdir().unwrap();
+        let event = Event::new(EventKind::Modify(ModifyKind::Metadata(
+            notify::event::MetadataKind::Any,
+        )))
+        .add_path(directory.path().to_owned());
+        assert!(!event_is_relevant(&event));
+    }
+
+    #[test]
+    fn real_filesystem_notifications_reconcile_create_modify_and_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::in_memory().unwrap();
+        let root = catalog::add_library_root(&state, dir.path().to_str().unwrap()).unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |event| {
+            let _ = sender.send(event);
+        })
+        .unwrap();
+        watcher.watch(dir.path(), RecursiveMode::Recursive).unwrap();
+        let file = dir.path().join("live.jpg");
+        let await_count = |count: usize, bytes: u64| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if let Ok(Ok(event)) = receiver.recv_timeout(Duration::from_millis(100)) {
+                    if event_is_relevant(&event) {
+                        catalog::reconcile_changed_paths(&state, &root.id, &event.paths).unwrap();
+                    }
+                }
+                let items = catalog::list_media_items(&state, None).unwrap();
+                if items.len() == count && (count == 0 || items[0].byte_size == bytes) {
+                    return;
+                }
+            }
+            panic!("filesystem notification did not update the catalog in time");
+        };
+        std::fs::write(&file, b"one").unwrap();
+        await_count(1, 3);
+        std::fs::write(&file, b"updated").unwrap();
+        await_count(1, 7);
+        std::fs::remove_file(&file).unwrap();
+        await_count(0, 0);
+    }
+
+    #[test]
     fn event_path_is_assigned_only_to_the_most_specific_registered_root() {
         let base = PathBuf::from("library");
         let nested = base.join("Nested");
@@ -584,6 +760,7 @@ mod tests {
                 WatchedRoot {
                     id: "base".to_owned(),
                     path: base,
+                    recursive: true,
                 },
             ),
             (
@@ -591,6 +768,7 @@ mod tests {
                 WatchedRoot {
                     id: "nested".to_owned(),
                     path: nested.clone(),
+                    recursive: true,
                 },
             ),
             (
@@ -598,6 +776,7 @@ mod tests {
                 WatchedRoot {
                     id: "other".to_owned(),
                     path: PathBuf::from("library-other"),
+                    recursive: true,
                 },
             ),
         ]
@@ -610,13 +789,14 @@ mod tests {
     }
 
     #[test]
-    fn debounce_waits_for_quiet_time_after_the_latest_event() {
+    fn debounce_has_a_bounded_latency_during_continuous_events() {
         let started_at = Instant::now();
         let watched_roots = [(
             "root".to_owned(),
             WatchedRoot {
                 id: "root".to_owned(),
                 path: PathBuf::from(r"C:\Library"),
+                recursive: true,
             },
         )]
         .into_iter()
@@ -632,14 +812,14 @@ mod tests {
         record_root_change(
             &mut pending,
             "root".to_owned(),
-            started_at + Duration::from_millis(800),
+            started_at + Duration::from_millis(100),
             false,
         );
         assert!(
             take_stable_root_changes(
                 &mut pending,
                 &watched_roots,
-                started_at + CHANGE_STABILITY_DELAY
+                started_at + Duration::from_millis(100)
             )
             .is_empty()
         );
@@ -667,7 +847,7 @@ mod tests {
         );
 
         let change = pending.get("root").expect("pending root");
-        assert_eq!(change.changed_at, started_at + Duration::from_millis(500));
+        assert_eq!(change.changed_at, started_at);
         assert!(change.refresh_hierarchy);
     }
 
@@ -715,6 +895,7 @@ mod tests {
                 WatchedRoot {
                     id: "one".to_owned(),
                     path: PathBuf::from("one"),
+                    recursive: true,
                 },
             ),
             (
@@ -722,6 +903,7 @@ mod tests {
                 WatchedRoot {
                     id: "two".to_owned(),
                     path: PathBuf::from("two"),
+                    recursive: true,
                 },
             ),
         ]

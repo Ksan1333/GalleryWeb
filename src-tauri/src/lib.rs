@@ -6,6 +6,7 @@ mod db;
 mod diagnostics;
 mod external_input;
 mod feature_vectors;
+mod file_browser;
 mod folder_watcher;
 mod in_app_browser;
 mod media_folders;
@@ -3554,7 +3555,7 @@ fn add_library_root(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<LibraryRoot, String> {
-    let root = catalog::add_library_root(&state, &path)?;
+    let root = file_browser::priority_root(&state, &path)?;
     app.asset_protocol_scope()
         .allow_directory(&root.path, true)
         .map_err(|error| format!("Failed to allow library root assets: {error}"))?;
@@ -3565,6 +3566,60 @@ fn add_library_root(
 fn list_library_roots(state: State<'_, AppState>) -> Result<Vec<LibraryRoot>, String> {
     background_activity::note_foreground_activity();
     catalog::list_library_roots(&state)
+}
+
+#[tauri::command]
+async fn browse_file_system(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: Option<String>,
+    scan: Option<bool>,
+) -> Result<file_browser::FolderListing, String> {
+    let database_path = state.database.path().to_owned();
+    let listing = tauri::async_runtime::spawn_blocking(move || {
+        let state = AppState::open(&database_path)?;
+        file_browser::browse(&state, path.as_deref(), scan.unwrap_or(true))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if let Some(path) = &listing.path {
+        app.asset_protocol_scope()
+            .allow_directory(path, false)
+            .map_err(|error| error.to_string())?;
+    }
+    invalidate_media_presence_cache();
+    Ok(listing)
+}
+
+#[tauri::command]
+fn set_folder_priority(
+    state: State<'_, AppState>,
+    root_id: String,
+    priority: bool,
+) -> Result<(), String> {
+    catalog::set_root_priority(&state, &root_id, priority)
+}
+
+#[tauri::command]
+async fn sync_media_folder(
+    state: State<'_, AppState>,
+    root_id: String,
+    folder_path: Option<String>,
+) -> Result<ScanReport, String> {
+    let database_path = state.database.path().to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = AppState::open(&database_path)?;
+        let report = if let Some(folder) = folder_path {
+            ScanReport::from_roots(vec![catalog::scan_folder(&state, &root_id, &folder)?])
+        } else {
+            catalog::scan_library(&state, Some(&root_id))?
+        };
+        media_folders::invalidate_folder_hierarchy_cache(&state, Some(&root_id))?;
+        invalidate_media_presence_cache();
+        Ok(report)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -3628,12 +3683,21 @@ fn remove_library_root(
 }
 
 #[tauri::command]
-fn scan_library(state: State<'_, AppState>, root_id: Option<String>) -> Result<ScanReport, String> {
+async fn scan_library(
+    state: State<'_, AppState>,
+    root_id: Option<String>,
+) -> Result<ScanReport, String> {
     background_activity::note_foreground_activity();
-    let report = catalog::scan_library(&state, root_id.as_deref())?;
-    media_folders::refresh_folder_hierarchy_cache(&state, root_id.as_deref())?;
-    invalidate_media_presence_cache();
-    Ok(report)
+    let database_path = state.database.path().to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = AppState::open(&database_path)?;
+        let report = catalog::scan_library(&state, root_id.as_deref())?;
+        media_folders::invalidate_folder_hierarchy_cache(&state, root_id.as_deref())?;
+        invalidate_media_presence_cache();
+        Ok(report)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -4183,6 +4247,9 @@ pub fn run() {
             convert_video_to_gif,
             add_library_root,
             list_library_roots,
+            browse_file_system,
+            set_folder_priority,
+            sync_media_folder,
             list_media_folders,
             list_folder_groups,
             save_folder_group,

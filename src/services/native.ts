@@ -57,7 +57,35 @@ export type LibraryRoot = {
   createdAt?: string;
   lastScannedAt?: string;
   mediaCount: number;
+  isPriority: boolean;
 };
+
+export type FileSystemListing = {
+  path: string | null;
+  parentPath: string | null;
+  folders: Array<{ path: string; displayName: string }>;
+  rootId: string | null;
+  relativeFolder: string;
+  priorityPath: string | null;
+};
+
+export async function browseFileSystem(path?: string, scan = true): Promise<NativeResult<FileSystemListing | null>> {
+  const result = await call<FileSystemListing | null>("browse_file_system", { path, scan }, null);
+  if (result.data && scan) clearCatalogCaches();
+  return result;
+}
+
+export async function setFolderPriority(rootId: string, priority: boolean): Promise<NativeResult<boolean>> {
+  const result = await call("set_folder_priority", { rootId, priority }, null);
+  if (!result.error) clearCatalogCaches();
+  return { ...result, data: result.available && !result.error };
+}
+
+export async function syncMediaFolder(rootId: string, folderPath?: string): Promise<NativeResult<boolean>> {
+  const result = await call("sync_media_folder", { rootId, folderPath }, null);
+  if (!result.error) clearCatalogCaches();
+  return { ...result, data: result.available && !result.error };
+}
 
 export type MediaFolder = {
   rootId: string;
@@ -816,6 +844,7 @@ function normalizeRoot(value: unknown): LibraryRoot {
     createdAt: timestampToIso(item.createdAt),
     lastScannedAt: timestampToIso(item.lastScannedAt),
     mediaCount: numberValue(item.itemCount, numberValue(item.mediaCount)),
+    isPriority: booleanValue(item.isPriority, true),
   };
 }
 
@@ -1583,7 +1612,10 @@ export async function scanLibrary(rootId?: string): Promise<NativeResult<Library
     return { ...scanResult, data: emptyLibrarySummary };
   }
   clearCatalogCaches();
-  return getLibrarySummary();
+  const summary = await getLibrarySummary();
+  const report = record(scanResult.data);
+  const issueCount = numberValue(report.issueCount);
+  return { ...summary, error: summary.error ?? (issueCount > 0 ? `${issueCount}件の場所を読み取れませんでした。読み取れた範囲は反映済みです。接続やアクセス権を確認してください。` : undefined) };
 }
 
 export async function getLibrarySummary(): Promise<NativeResult<LibrarySummary>> {
@@ -2245,7 +2277,9 @@ export async function importCatalogData(payload: unknown): Promise<NativeResult<
 }
 
 export function mediaAssetUrl(item: MediaItem): string | undefined {
-  return localAssetUrl(item.path);
+  const url = localAssetUrl(item.path);
+  if (!url || /^(data:|blob:)/i.test(url)) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(`${item.modifiedAt ?? ""}-${item.sizeBytes}`)}`;
 }
 
 export function localAssetUrl(path: string | undefined): string | undefined {

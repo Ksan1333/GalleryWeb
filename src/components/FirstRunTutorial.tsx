@@ -39,26 +39,26 @@ const TUTORIAL_FOCUSABLE_SELECTOR = [
 const tutorialSteps: TutorialStep[] = [
   {
     eyebrow: "STEP 01 · LIBRARY",
-    title: "最初にメディアフォルダーを登録",
+    title: "全フォルダーからすぐに閲覧",
     description:
-      "画像、GIF、動画、PDF、ZIPが入ったフォルダーを登録すると、PixVaultが中身をカタログ化します。",
+      "登録は不要です。「全フォルダー」からドライブや空のフォルダーも開けます。優先フォルダーは配下を先に読み込みます。",
     icon: "folderPlus",
     accent: "violet",
     points: [
       {
         icon: "folder",
         title: "フォルダー構造はそのまま",
-        description: "元ファイルを移動せず、サブフォルダーも含めて読み込みます。",
+        description: "通常は開いた場所だけを読み込みます。元ファイルは移動しません。",
       },
       {
         icon: "refresh",
-        title: "変更は再スキャンで反映",
-        description: "追加・更新されたファイルだけを確認し、一覧とキャッシュを更新します。",
+        title: "ファイル変更を自動反映",
+        description: "優先フォルダーと閲覧した場所を監視します。更新ボタンから再確認もできます。",
       },
       {
         icon: "trash",
-        title: "登録解除は安全",
-        description: "登録を解除しても、元のファイル自体は削除されません。",
+        title: "優先指定の解除は安全",
+        description: "優先指定を解除しても、元のファイル自体は削除されません。",
       },
     ],
   },
@@ -177,8 +177,8 @@ const tutorialSteps: TutorialStep[] = [
       },
       {
         icon: "folderPlus",
-        title: "まずはフォルダーを登録",
-        description: "ホームまたは設定の「追加」から、最初のライブラリーを作りましょう。",
+        title: "まずは全フォルダーを開く",
+        description: "よく使う場所は「優先読み込みに追加」で先に読み込めます。",
       },
       {
         icon: "info",
@@ -381,10 +381,10 @@ export function FirstRunTutorial({ reopenRequestId = 0 }: { reopenRequestId?: nu
           <p className="first-run-kicker">WELCOME TO PIXVAULT</p>
           <h1 id="first-run-welcome-title">使い方を見てみますか？</h1>
           <p className="first-run-lead">
-            フォルダー登録からビュワー、AI分析まで、約2分で基本操作をご案内します。
+            優先読み込みからビュワー、AI分析まで、約2分で基本操作をご案内します。
           </p>
           <div className="first-run-choice-features" aria-label="チュートリアルの内容">
-            <span><Icon name="folderPlus" />ライブラリー登録</span>
+            <span><Icon name="folderPlus" />優先読み込み</span>
             <span><Icon name="play" />専用ビュワー</span>
             <span><Icon name="sparkles" />端末内AI分析</span>
           </div>

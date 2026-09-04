@@ -184,6 +184,16 @@ pub fn list_media_folders(
 
 /// Refreshes the persistent physical hierarchy after a catalog scan. Normal
 /// folder listings can then return without walking a large library again.
+pub fn invalidate_folder_hierarchy_cache(
+    state: &AppState,
+    root_id: Option<&str>,
+) -> Result<(), String> {
+    let connection = state.database.lock()?;
+    connection.execute("DELETE FROM folder_hierarchy_cache WHERE relative_folder = '' AND (?1 IS NULL OR root_id = ?1)", [root_id])
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 pub fn refresh_folder_hierarchy_cache(
     state: &AppState,
     root_id: Option<&str>,

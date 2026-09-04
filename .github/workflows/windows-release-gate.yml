@@ -46,6 +46,7 @@ jobs:
           npm run test:performance
           npm run test:themes
           npm run test:layout
+          npm run test:library
 
       - name: Verify Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
