@@ -246,7 +246,7 @@ export function GallerySearchModal({
   const [folderError, setFolderError] = useState<string>();
   const queryInputRef = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
-  const translateTag = useTagTranslations();
+  const translateTag = useTagTranslations(open);
   useAppBack(open, onClose);
 
   useEffect(() => {

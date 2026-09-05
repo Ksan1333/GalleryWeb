@@ -2508,14 +2508,12 @@ fn import_external_media_item(
 #[tauri::command]
 async fn take_pending_external_media(
     app: tauri::AppHandle,
-    external_input_state: State<'_, external_input::ExternalInputState>,
 ) -> Result<Option<ExternalMediaOpenBatch>, String> {
-    let pending = external_input_state.take_pending_external_media()?;
-    if pending.is_empty() {
-        return Ok(None);
-    }
     let worker_app = app.clone();
-    let (mut items, failures) = run_catalog_worker("External media open", move || {
+    let (items, failures) = run_catalog_worker("External media open", move || {
+        let pending = worker_app
+            .state::<external_input::ExternalInputState>()
+            .take_pending_external_media()?;
         let state = worker_app.state::<AppState>();
         let mut items = Vec::with_capacity(pending.len());
         let mut failures = Vec::new();
@@ -2535,6 +2533,9 @@ async fn take_pending_external_media(
         Ok((items, failures))
     })
     .await?;
+    if items.is_empty() && failures.is_empty() {
+        return Ok(None);
+    }
     if items.is_empty() {
         return Err(failures
             .into_iter()
@@ -2549,7 +2550,8 @@ async fn take_pending_external_media(
             .allow_file(&item.absolute_path)
             .map_err(|error| format!("外部ファイルの表示を許可できません: {error}"))?;
     }
-    attach_existing_thumbnail_paths(&app, &mut items)?;
+    // The selected original must not wait for the thumbnail index to load.
+    // The viewer requests surrounding thumbnails after its first media paint.
     invalidate_media_presence_cache();
     let current_id = items[0].id.clone();
     Ok(Some(ExternalMediaOpenBatch {
@@ -4337,7 +4339,9 @@ fn import_catalog_data(
 pub fn run() {
     let startup_arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     tauri::Builder::default()
-        .manage(external_input::ExternalInputState::default())
+        .manage(external_input::ExternalInputState::with_startup_pending(
+            !startup_arguments.is_empty(),
+        ))
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             background_activity::note_foreground_activity();
             if let Some(window) = app.get_webview_window("main") {
@@ -4452,6 +4456,9 @@ pub fn run() {
                             0
                         }
                     };
+                    startup_app
+                        .state::<external_input::ExternalInputState>()
+                        .finish_startup();
                     if accepted_media > 0 {
                         let _ = startup_app.emit("pixvault://external-media-open", ());
                     }

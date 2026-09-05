@@ -39,9 +39,10 @@ export function loadTagTranslations(): Promise<TagTranslationDictionary> {
   return loadingPromise;
 }
 
-export function useTagTranslations(): (name: string) => string {
+export function useTagTranslations(enabled = true): (name: string) => string {
   const [, setLoaded] = useState(false);
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     void loadTagTranslations().then(() => {
       if (active) setLoaded(true);
@@ -49,6 +50,6 @@ export function useTagTranslations(): (name: string) => string {
     return () => {
       active = false;
     };
-  }, []);
+  }, [enabled]);
   return useCallback((name: string) => translateTagName(name), []);
 }

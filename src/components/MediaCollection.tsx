@@ -147,6 +147,8 @@ type MediaCollectionProps = {
   refreshVersion?: number;
   openRequest?: { requestId: string; item: MediaItem };
   onOpenRequestClose?: () => void;
+  onOpenRequestReady?: () => void;
+  deferCatalog?: boolean;
 };
 
 type GalleryContextMenuState = {
@@ -1353,7 +1355,7 @@ export function MediaCollection({
   compactFileLayout = false, onBack,
   onNavigateFolderPath, leadingFolders = [], showLeadingFolderCounts = true, onOpenLeadingFolder, favoriteFolderKeys,
   onToggleLeadingFolderFavorite, onAddFolder, onDataChanged,
-  tagNavigation, refreshVersion, openRequest, onOpenRequestClose,
+  tagNavigation, refreshVersion, openRequest, onOpenRequestClose, onOpenRequestReady, deferCatalog = false,
 }: MediaCollectionProps) {
   const [pages, setPages] = useState<Map<number, MediaItem[]>>(() => new Map());
   const [pageInfo, setPageInfo] = useState<MediaPageInfo>({ totalCount: 0, dateGroups: [] });
@@ -1369,8 +1371,8 @@ export function MediaCollection({
   const [refreshing, setRefreshing] = useState(false);
   const [nativeAvailable, setNativeAvailable] = useState(true);
   const [error, setError] = useState<string>();
-  const [selected, setSelected] = useState<MediaItem>();
-  const [selectedOutsideCollection, setSelectedOutsideCollection] = useState(false);
+  const [selected, setSelected] = useState<MediaItem | undefined>(openRequest?.item);
+  const [selectedOutsideCollection, setSelectedOutsideCollection] = useState(Boolean(openRequest));
   const [catalogFailedQueryKey, setCatalogFailedQueryKey] = useState("");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<Map<string, MediaItem>>(() => new Map());
@@ -1412,6 +1414,7 @@ export function MediaCollection({
   const selectedMediaRef = useRef(selectedMedia);
   const viewerReturnTarget = useRef<{ mediaId: string; index: number } | undefined>(undefined);
   const handledOpenRequestId = useRef<string | undefined>(undefined);
+  const positionedOpenRequestId = useRef<string | undefined>(undefined);
   const lastExternalRefreshVersion = useRef(refreshVersion);
   const rangeSelectionGeneration = useRef(0);
   const rangeSelectionOperation = useRef<ReturnType<typeof startOperation> | undefined>(undefined);
@@ -1425,7 +1428,7 @@ export function MediaCollection({
     }
     setRangeSelectionProgress(undefined);
   }, []);
-  const translateTag = useTagTranslations();
+  const translateTag = useTagTranslations(!deferCatalog);
   const gridSize = displayPreferences.gridSize;
   const { sortBy, sortDirection } = sortQuery(displayPreferences.sortOrder);
   const groupMode: GalleryGroupMode = displayPreferences.groupMode;
@@ -1599,15 +1602,22 @@ export function MediaCollection({
   const queryKey = useMemo(() => JSON.stringify(baseQuery), [baseQuery]);
 
   useEffect(() => {
-    if (!openRequest || handledOpenRequestId.current === openRequest.requestId
+    if (!openRequest || handledOpenRequestId.current === openRequest.requestId) return;
+    handledOpenRequestId.current = openRequest.requestId;
+    viewerReturnTarget.current = undefined;
+    setSelectedOutsideCollection(true);
+    setSelected(openRequest.item);
+  }, [openRequest?.requestId, openRequest?.item]);
+
+  useEffect(() => {
+    if (deferCatalog || !openRequest || selected?.id !== openRequest.item.id || positionedOpenRequestId.current === openRequest.requestId
       || !displayPreferencesLoaded || (catalogReadyQueryKey !== queryKey && catalogFailedQueryKey !== queryKey)) return;
     let active = true;
     const request = openRequest;
     if (catalogFailedQueryKey === queryKey) {
-      handledOpenRequestId.current = request.requestId;
+      positionedOpenRequestId.current = request.requestId;
       viewerReturnTarget.current = undefined;
       setSelectedOutsideCollection(true);
-      setSelected(request.item);
       return;
     }
     // Resolve the rank in SQLite, not by downloading every preceding page.
@@ -1615,16 +1625,15 @@ export function MediaCollection({
     // never assign it a fabricated index in the filtered collection.
     void getMediaItemIndex(request.item.id, baseQuery).then((result) => {
       if (!active) return;
-      handledOpenRequestId.current = request.requestId;
+      positionedOpenRequestId.current = request.requestId;
       const index = result.error ? null : result.data;
       viewerReturnTarget.current = index === null
         ? undefined : { mediaId: request.item.id, index };
       setSelectedOutsideCollection(index === null);
-      setSelected(request.item);
       if (result.error) setError(`ファイルを開きましたが、フォルダー内の位置を取得できませんでした: ${result.error}`);
     });
     return () => { active = false; };
-  }, [baseQuery, catalogReadyQueryKey, catalogFailedQueryKey, displayPreferencesLoaded, openRequest?.requestId, openRequest?.item, queryKey]);
+  }, [baseQuery, catalogReadyQueryKey, catalogFailedQueryKey, displayPreferencesLoaded, openRequest?.requestId, openRequest?.item, queryKey, deferCatalog, selected?.id]);
 
   useEffect(() => {
     cancelRangeSelection();
@@ -1817,12 +1826,13 @@ export function MediaCollection({
   }, [baseQuery, queryKey]);
 
   useEffect(() => {
+    if (deferCatalog) return;
     const quiet = quietReload.current && quietReloadQueryKey.current === queryKey;
     quietReload.current = false;
     quietReloadQueryKey.current = undefined;
     const timer = window.setTimeout(() => void loadInfo(quiet), 60);
     return () => window.clearTimeout(timer);
-  }, [loadInfo, queryKey, reloadVersion]);
+  }, [loadInfo, queryKey, reloadVersion, deferCatalog]);
 
   const visibleLeadingFolders = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("ja");
@@ -1912,7 +1922,7 @@ export function MediaCollection({
   }, [metrics, viewport, virtualLayout, visibleLeadingFolders]);
 
   useEffect(() => {
-    if (pageInfo.totalCount === 0 || visibleLayout.lastIndex < visibleLayout.firstIndex) return;
+    if (deferCatalog || pageInfo.totalCount === 0 || visibleLayout.lastIndex < visibleLayout.firstIndex) return;
     const firstPage = Math.floor(visibleLayout.firstIndex / MEDIA_PAGE_SIZE);
     const lastPage = Math.floor(visibleLayout.lastIndex / MEDIA_PAGE_SIZE);
     visiblePage.current = Math.floor((firstPage + lastPage) / 2);
@@ -2014,7 +2024,7 @@ export function MediaCollection({
         scheduleRetry(cause instanceof Error ? cause.message : "メディアページを読み込めませんでした。");
       });
     }
-  }, [baseQuery, pageInfo.totalCount, pageLoadRevision, pages, queryKey, visibleLayout]);
+  }, [baseQuery, pageInfo.totalCount, pageLoadRevision, pages, queryKey, visibleLayout, deferCatalog]);
 
   const { itemByIndex, mediaIndexById, loadedItems } = useMemo(() => {
     const indexed = new Map<number, MediaItem>();
@@ -3471,6 +3481,8 @@ export function MediaCollection({
       {selected && (
         <Suspense fallback={null}>
           <MediaViewer
+            prioritizeVisual={openRequest?.requestId}
+            onVisualReady={(mediaId) => { if (openRequest?.item.id === mediaId) onOpenRequestReady?.(); }}
             items={selectedOutsideCollection ? [selected]
               : loadedItems.some((candidate) => candidate.id === selected.id)
                 ? loadedItems : [...loadedItems, selected]}

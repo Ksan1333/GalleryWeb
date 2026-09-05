@@ -43,7 +43,7 @@ export function BulkMediaEditor({
   onClose,
   onApply,
 }: BulkMediaEditorProps) {
-  const translateTag = useTagTranslations();
+  const translateTag = useTagTranslations(open);
   const dialogRef = useRef<HTMLElement>(null);
   const [availableTags, setAvailableTags] = useState<Tag[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());

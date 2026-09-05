@@ -23,6 +23,18 @@ test("App delegates external files to the Explorer collection viewer", () => {
   assert.ok(viewer.includes("if (preserveItemOrder) return items"));
 });
 
+test("native startup barrier and queue draining stay on a blocking worker without a thumbnail-index dependency", () => {
+  const native = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+  const start = native.indexOf('async fn take_pending_external_media(');
+  assert.ok(start > 0);
+  const command = native.slice(start, native.indexOf('#[tauri::command]', start));
+  const worker = command.indexOf('run_catalog_worker(');
+  assert.ok(worker >= 0 && worker < command.indexOf('.take_pending_external_media()?'));
+  assert.ok(!command.includes('attach_existing_thumbnail_paths'));
+  assert.ok(native.includes('ExternalInputState::with_startup_pending('));
+  assert.ok(native.includes('.finish_startup();'));
+});
+
 function media(id) {
   return {
     id,
@@ -46,6 +58,7 @@ function harness({ responses = [], listenError } = {}) {
     activeTakes: 0,
     maxActiveTakes: 0,
     unlistened: 0,
+    initialDrains: 0,
   };
   const module = { exports: {} };
   vm.runInNewContext(hookCode, {
@@ -88,6 +101,7 @@ function harness({ responses = [], listenError } = {}) {
     enabled: true,
     onOpen: (batch) => opened.push(batch),
     onError: (message) => errors.push(message),
+    onInitialDrain: () => { state.initialDrains += 1; },
   });
   const cleanups = effects.map((effect) => effect());
   return {
@@ -111,6 +125,7 @@ test("subscribes before draining startup input and repairs an invalid current id
   assert.equal(current.state.takes, 1);
   assert.equal(current.opened.length, 1);
   assert.equal(current.opened[0].currentId, first.id);
+  assert.equal(current.state.initialDrains, 1);
   current.unmount();
   assert.equal(current.state.unlistened, 1);
 });
@@ -126,12 +141,14 @@ test("coalesces events while a take is pending and never drains concurrently", a
   });
   await settle();
   current.state.handler({ payload: { ignored: true } });
+  assert.equal(current.state.initialDrains, 0, "ordinary startup work waits until the first take completes");
   current.state.handler({ payload: { ignored: true } });
   release({ data: null, available: true });
   await settle();
   await settle();
   assert.equal(current.state.takes, 2);
   assert.equal(current.state.maxActiveTakes, 1);
+  assert.equal(current.state.initialDrains, 1, "startup is released exactly once even for empty input");
   current.unmount();
 });
 
@@ -159,5 +176,27 @@ test("deduplicates request ids and still drains startup input if listen fails", 
   await settle();
   assert.deepEqual(failed.errors, ["外部ファイルを受け取る準備ができませんでした。"]);
   assert.equal(failed.opened.length, 1);
+  assert.equal(failed.state.initialDrains, 1, "failed event subscription must not block normal startup");
   failed.unmount();
+});
+
+test("failed initial queue retrieval releases ordinary startup rather than leaving it blank", async () => {
+  const current = harness({responses:[() => Promise.reject(new Error('queue unavailable'))]});
+  await settle();
+  await settle();
+  assert.equal(current.state.initialDrains, 1);
+  assert.equal(current.opened.length, 0);
+  assert.equal(current.errors.length, 1);
+  current.unmount();
+});
+
+test("unmounted startup ignores delayed queue delivery and its ready callback", async () => {
+  let release;
+  const current = harness({responses:[() => new Promise(resolve => { release = resolve; })]});
+  await settle();
+  current.unmount();
+  release({data:{requestId:'late', items:[media('one')], currentId:'one'}, available:true});
+  await settle();
+  assert.equal(current.opened.length, 0);
+  assert.equal(current.state.initialDrains, 0);
 });

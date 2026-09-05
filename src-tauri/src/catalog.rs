@@ -2137,6 +2137,8 @@ pub(crate) fn relative_event_path(root: &Path, path: &Path) -> Option<String> {
             value.strip_prefix("//?/").unwrap_or(&value).to_owned()
         }
     }
+    let root_path = root;
+    let event_path = path;
     let root = normalize(root).trim_end_matches('/').to_owned();
     let path = normalize(path);
     let prefix = format!("{root}/");
@@ -2148,7 +2150,49 @@ pub(crate) fn relative_event_path(root: &Path, path: &Path) -> Option<String> {
     {
         Some(path[prefix.len()..].to_owned())
     } else {
-        None
+        // Windows notifications/TEMP can use an 8.3 alias (RUNNER~1) while
+        // registered roots use their long canonical names. Deleted paths must
+        // resolve their surviving ancestor, not fail canonicalization outright.
+        #[cfg(windows)]
+        {
+            let canonical_root = root_path.canonicalize().ok()?;
+            let canonical_event = canonical_event_ancestor(event_path)?;
+            let relative = canonical_event.strip_prefix(&canonical_root).ok()?;
+            Some(relative.to_string_lossy().replace('\\', "/"))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (root_path, event_path);
+            None
+        }
+    }
+}
+
+#[cfg(windows)]
+fn canonical_event_ancestor(path: &Path) -> Option<PathBuf> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    {
+        return None;
+    }
+    let mut ancestor = path;
+    let mut suffix = Vec::new();
+    loop {
+        match ancestor.canonicalize() {
+            Ok(mut canonical) => {
+                for component in suffix.iter().rev() {
+                    canonical.push(component);
+                }
+                return Some(canonical);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                suffix.push(ancestor.file_name()?.to_owned());
+                ancestor = ancestor.parent()?;
+            }
+            Err(_) => return None,
+        }
     }
 }
 
@@ -3224,6 +3268,57 @@ mod tests {
         let result = scan_library(&state, Some(&root.id)).unwrap();
         assert_eq!(result.missing, 1_000);
         assert_eq!(list_media_items(&state, None).unwrap().len(), 10);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn short_windows_event_paths_reconcile_existing_and_deleted_children() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+
+        let directory = tempdir().unwrap();
+        let root = directory
+            .path()
+            .join("Long folder name for external events");
+        fs::create_dir(&root).unwrap();
+        let input = root
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let mut buffer = vec![0_u16; 32_768];
+        let length =
+            unsafe { GetShortPathNameW(input.as_ptr(), buffer.as_mut_ptr(), buffer.len() as u32) }
+                as usize;
+        assert!(length > 0 && length < buffer.len());
+        let short = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length]));
+        let canonical_root = root.canonicalize().unwrap();
+        let nested = root.join("Nested");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("image.jpg"), b"image").unwrap();
+        let event = short.join("Nested").join("image.jpg");
+        assert_eq!(
+            relative_event_path(&canonical_root, &event).as_deref(),
+            Some("Nested/image.jpg")
+        );
+        fs::remove_file(nested.join("image.jpg")).unwrap();
+        fs::remove_dir(&nested).unwrap();
+        assert_eq!(
+            canonical_event_ancestor(&event),
+            Some(canonical_root.join("Nested").join("image.jpg"))
+        );
+        assert_eq!(
+            relative_event_path(&canonical_root, &event).as_deref(),
+            Some("Nested/image.jpg")
+        );
+        assert_eq!(
+            relative_event_path(&canonical_root, &directory.path().join("outside.jpg")),
+            None
+        );
+        assert_eq!(
+            canonical_event_ancestor(&short.join("..").join("outside.jpg")),
+            None
+        );
     }
 
     #[test]

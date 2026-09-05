@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { addLibraryRoot, browseFileSystem, listLibraryRoots, scanLibrary, setFolderPriority, type FileSystemListing, type LibraryRoot, type MediaItem, type MediaKind } from "../services/native";
-import { navigateExplorer, readExplorerHistory, rememberExplorerHistory, sameExplorerPath, stepExplorer, type ExplorerRequest } from "../services/explorerNavigation";
+import { navigateExplorer, parentFilePath, readExplorerHistory, rememberExplorerHistory, sameExplorerPath, stepExplorer, type ExplorerRequest } from "../services/explorerNavigation";
 import { Icon } from "./Icon";
 import { MediaCollection } from "./MediaCollection";
 import "./FileSystemBrowser.css";
 
 const EXPLORER_MEDIA_KINDS: MediaKind[] = ["image", "gif", "video", "pdf", "archive"];
 
-export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityChanged, navigationRequest, openRequest, onOpenRequestClose }: {
+export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityChanged, navigationRequest, openRequest, onOpenRequestClose, onOpenRequestReady }: {
   refreshVersion: number;
   onDataChanged: () => void;
   onPriorityChanged?: () => void;
   navigationRequest?: ExplorerRequest;
   openRequest?: { requestId: string; item: MediaItem };
   onOpenRequestClose?: () => void;
+  onOpenRequestReady?: () => void;
 }) {
   const [navigation, setNavigation] = useState(() => {
     const previous = readExplorerHistory();
@@ -21,7 +22,18 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityCha
   });
   const path = navigation.path;
   const [address, setAddress] = useState("");
-  const [listing, setListing] = useState<FileSystemListing | null>(null);
+  const [loadedListing, setListing] = useState<FileSystemListing | null>(null);
+  const [visualReadyRequestId, setVisualReadyRequestId] = useState<string>();
+  const seedListing = useRef<FileSystemListing | null>(null);
+  const currentOpenRequest = navigationRequest && sameExplorerPath(path, navigationRequest.path) ? openRequest : undefined;
+  if (currentOpenRequest?.item.rootId && currentOpenRequest.item.relativePath !== undefined) {
+    const relative = currentOpenRequest.item.relativePath.replace(/\\/g, "/");
+    seedListing.current = { path: path ?? null, parentPath: path ? parentFilePath(path) ?? null : null,
+      rootId: currentOpenRequest.item.rootId, relativeFolder: relative.slice(0, Math.max(0, relative.lastIndexOf("/"))),
+      priorityPath: null, folders: [] };
+  }
+  const listing = loadedListing ?? (sameExplorerPath(seedListing.current?.path ?? undefined, path) ? seedListing.current : null);
+  const deferFolder = Boolean(currentOpenRequest && seedListing.current && sameExplorerPath(seedListing.current.path ?? undefined, path) && visualReadyRequestId !== currentOpenRequest.requestId);
   const [priorities, setPriorities] = useState<LibraryRoot[]>([]);
   const [loading, setLoading] = useState(false);
   const [priorityBusy, setPriorityBusy] = useState(false);
@@ -62,6 +74,7 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityCha
   }, [navigation, priorityBusy]);
 
   const load = useCallback(async (scan = true) => {
+    if (deferFolder) return;
     const current = ++generation.current;
     setLoading(true);
     setError(undefined);
@@ -80,7 +93,7 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityCha
     if (current !== generation.current) return;
     if (!roots.error) setPriorities(roots.data.filter((root) => root.isPriority));
     setLoading(false);
-  }, [path]);
+  }, [path, deferFolder]);
 
   useEffect(() => {
     setListing(null);
@@ -158,7 +171,9 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityCha
     {listing && !listing.path && <div className="filesystem-drives">{listing.folders.map((folder) => <button key={folder.path} type="button" onClick={() => navigate(folder.path)}><Icon name="folderWindows" /><strong>{folder.displayName}</strong><small>{folder.path}</small></button>)}</div>}
     {listing?.rootId && <section className="filesystem-content" aria-label="フォルダーとメディア"><MediaCollection key={`${listing.rootId}:${listing.relativeFolder}`} embedded compactFileLayout advancedGallerySearch viewerIncludesAllMedia showLeadingFolderCounts={false}
       eyebrow="FOLDER" title={listing.path ?? "フォルダー"} description="フォルダーとメディア" kinds={EXPLORER_MEDIA_KINDS}
-      openRequest={navigationRequest && sameExplorerPath(path, navigationRequest.path) && sameExplorerPath(listing.path ?? undefined, path) ? openRequest : undefined} onOpenRequestClose={onOpenRequestClose}
+      openRequest={sameExplorerPath(listing.path ?? undefined, path) ? currentOpenRequest : undefined} onOpenRequestClose={onOpenRequestClose}
+      deferCatalog={deferFolder || !loadedListing}
+      onOpenRequestReady={() => { setVisualReadyRequestId(currentOpenRequest?.requestId); onOpenRequestReady?.(); }}
       emptyTitle="このフォルダーは空です" emptyDescription="表示できるメディアや子フォルダーがありません。"
       initialRootId={listing.rootId} initialFolderPath={listing.relativeFolder} refreshVersion={revision}
       leadingFolders={listing.folders.map((folder) => ({ key: folder.path, rootId: listing.rootId!, relativeFolder: folder.path, name: folder.displayName, displayPath: folder.path, itemCount: 0, hasChildren: true }))}

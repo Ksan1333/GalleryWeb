@@ -1,5 +1,5 @@
 // Isolated headless React integration: no desktop, screenshots, user files or database.
-// Only MediaViewer's rendering is replaced; explorer, query/rank resolution,
+// Unless --first-paint is used, MediaViewer's rendering is replaced; explorer, query/rank resolution,
 // paging, close restoration and history all use the actual application components.
 import assert from "node:assert/strict";
 import { dirname, resolve } from "node:path";
@@ -8,6 +8,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const firstPaint = process.argv.includes("--first-paint");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE
   ? pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href : "playwright");
 const server = await createServer({
@@ -15,10 +16,12 @@ const server = await createServer({
   plugins: [{
     name: "external-explorer-viewer-double", enforce: "pre",
     transform(_code, id) {
+      if (firstPaint) return;
       if (!id.replaceAll("\\", "/").split("?")[0].endsWith("/src/components/MediaViewer.tsx")) return;
       return `import React, {useEffect} from 'react';
         export function MediaViewer(props) {
           useEffect(() => { window.__externalFixture.viewerMounts += 1; }, []);
+          useEffect(() => { props.onVisualReady?.(props.currentId); }, [props.currentId]);
           const snapshot = { currentId: props.currentId, currentIndex: props.collection?.currentIndex,
             query: props.collection?.query, totalCount: props.collection?.totalCount,
             indexed: props.collection?.indexedItems.map(([index, item]) => [index, item.id]),
@@ -52,6 +55,7 @@ const server = await createServer({
             const {useState} = React;
             import ReactDOM from '/node_modules/.vite/deps/react-dom_client.js';
             import {FileSystemBrowser} from '/src/components/FileSystemBrowser.tsx';
+            import App from '/src/App.tsx';
             import {externalExplorerTarget} from '/src/services/explorerNavigation.ts';
             import '/src/App.css';
             function Fixture() {
@@ -75,7 +79,7 @@ const server = await createServer({
                     onOpenRequestClose:() => { setBatch(undefined); setNavigation(undefined); setRevision(value => value + 1); },
                   })));
             }
-            ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Fixture));
+            ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(new URLSearchParams(location.search).has('cold') ? App : Fixture));
           </script></body></html>`);
       });
     },
@@ -87,6 +91,8 @@ const server = await createServer({
 function installNativeFixture() {
   const image = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#b892ec"/></svg>');
   const stats = window.__externalFixture = { calls: [], unexpected: [], viewerMounts: 0 };
+  const cold = new URLSearchParams(location.search).has('cold');
+  if (cold) { stats.deferImage = true; stats.holdBrowse = true; }
   stats.makeItem = (folder = "", index, extended = false) => ({
     id: `${folder || "drive"}-${index}`, rootId: "fixture-root",
     relativePath: `${folder ? folder + "/" : ""}media-${index}.jpg`,
@@ -96,14 +102,32 @@ function installNativeFixture() {
     modifiedAt: "2026-09-05T00:00:00Z", thumbnailPath: image,
   });
   const normalize = path => (path ?? "").replace(/^\\\\\?\\/, "").replaceAll("/", "\\");
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {unregisterListener: () => {}};
   window.__TAURI_INTERNALS__ = {
-    convertFileSrc: () => image,
+    metadata: {currentWindow:{label:'main'}, currentWebview:{label:'main'}},
+    transformCallback: () => 1,
+    convertFileSrc: () => stats.deferImage ? location.origin + "/__priority-image.svg" : image,
     invoke: async (command, args = {}) => {
-      stats.calls.push({command, args});
-      if (command === "get_preferences") return {};
+      stats.calls.push({command, args, at:performance.now()});
+      if (command === 'plugin:window|is_fullscreen') return false;
+      if (command === 'plugin:window|set_theme') return null;
+      if (command.startsWith('plugin:event|')) return 1;
+      if (command === 'take_pending_external_media') {
+        if (!cold || stats.tookStartup) return null;
+        stats.tookStartup = true;
+        await new Promise(resolve => { stats.releaseStartup = resolve; });
+        const item = stats.makeItem('Books', 900);
+        return {requestId:'cold-start', currentId:item.id, items:[item]};
+      }
+      if (command === 'take_pending_x_url' || command === 'get_thumbnail_precache_status') return null;
+      if (command === 'get_ai_analysis_status') return {phase:'idle', categoryCounts:[], previewTags:[], cleanupPending:false};
+      if (command === 'get_runtime_info') return {appName:'Fixture', appVersion:'0.2.6', os:'windows', arch:'x86_64', databaseSchemaVersion:9};
+      if (command === 'get_library_summary') return {totalItems:3000, images:3000, favorites:0, libraryRoots:1};
+      if (command === "get_preferences") return {'onboarding.firstRun.v1':{status:'completed', step:5}};
       if (command === "list_library_roots") return [{id:"fixture-root", path:"E:\\", displayName:"Fixture", isPriority:true, mediaCount:3000}];
       if (command === "list_tag_translations") return {};
       if (command === "list_media_folders" || command === "list_tags") return [];
+      if (command === 'get_visual_recommendations') return [];
       if (command === "get_media_page_info") return {totalCount:1000, dateGroups:[]};
       if (command === "get_media_item_index") {
         const index = Number(args.mediaId.slice(args.mediaId.lastIndexOf("-") + 1));
@@ -120,6 +144,7 @@ function installNativeFixture() {
       if (command === "browse_file_system") {
         if (!args.path) return {path:null, parentPath:null, rootId:null, relativeFolder:"", priorityPath:null,
           folders:[{path:"E:\\", displayName:"Eドライブ"}]};
+        if (stats.holdBrowse) await new Promise(resolve => { stats.releaseBrowse = resolve; });
         const path = normalize(args.path);
         const relativeFolder = path.slice(3).replace(/\\$/, "");
         return {path:`\\\\?\\${path}`, parentPath:relativeFolder ? "E:\\" : null, rootId:"fixture-root",
@@ -148,7 +173,12 @@ try {
   const tick = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const open = async (requestId, folder, index, extended = false) => {
     await page.evaluate(args => window.__sendExternal(...args), [requestId, folder, index, extended]);
-    await page.waitForFunction(id => document.querySelector('[data-testid="viewer-state"]')?.textContent.includes(`"currentId":"${id}"`), `${folder || "drive"}-${index}`);
+    await page.waitForFunction(([id, index]) => {
+      const text = document.querySelector('[data-testid="viewer-state"]')?.textContent;
+      if (!text) return false;
+      const value = JSON.parse(text);
+      return value.currentId === id && value.currentIndex === index;
+    }, [`${folder || "drive"}-${index}`, index]);
     const current = await state();
     assert.equal(current.currentIndex, index);
     assert.equal(current.totalCount, 1000);
@@ -178,6 +208,98 @@ try {
     return position;
   };
 
+  if (firstPaint) {
+    let releaseImage;
+    const imageBarrier = new Promise(resolve => { releaseImage = resolve; });
+    await page.route('**/__priority-image.svg*', async route => {
+      await imageBarrier;
+      await route.fulfill({contentType:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="red"/></svg>'});
+    });
+    await page.evaluate(() => {
+      const stats = window.__externalFixture;
+      stats.calls = []; stats.deferImage = true; stats.holdBrowse = true;
+      document.addEventListener('load', event => {
+        if (event.target instanceof HTMLImageElement && event.target.closest('.pv-viewer-main')) stats.visualLoadedAt = performance.now();
+      }, true);
+      window.__sendExternal('visual-first', 'Books', 900);
+    });
+    await page.getByRole('dialog').waitFor();
+    await page.locator('.pv-viewer-main img').waitFor({state:'attached'});
+    await tick();
+    const beforeVisual = await page.evaluate(() => window.__externalFixture.calls.map(call => call.command));
+    assert.ok(!beforeVisual.some(command => ['browse_file_system','list_media_items','get_media_page_info','get_media_item_index','get_media_thumbnails','get_media_thumbnail','list_tag_translations','get_visual_recommendations'].includes(command)), JSON.stringify(beforeVisual));
+    assert.equal(await page.locator('.pv-media-info-panel').count(), 0);
+    releaseImage();
+    await page.waitForFunction(() => Boolean(window.__externalFixture.visualLoadedAt && window.__externalFixture.releaseBrowse));
+    assert.equal(await page.locator('.pv-viewer-main img').evaluate(img => img.complete && img.naturalWidth === 100), true);
+    await page.evaluate(() => { window.__firstViewerImage = document.querySelector('.pv-viewer-main img'); });
+    assert.equal(await ranks(), 0, 'slow folder listing must not prevent image display');
+    await page.evaluate(() => { window.__externalFixture.holdBrowse = false; window.__externalFixture.releaseBrowse(); });
+    await page.waitForFunction(() => window.__externalFixture.calls.some(call => call.command === 'get_media_item_index'));
+    await tick();
+    assert.equal(await page.evaluate(() => window.__firstViewerImage === document.querySelector('.pv-viewer-main img')), true, 'hydrate the same viewer, never reopen or decode again');
+    assert.equal(await page.evaluate(() => window.__externalFixture.calls.filter(call => call.command === 'browse_file_system').every(call => call.at > window.__externalFixture.visualLoadedAt)), true);
+    await page.evaluate(() => window.__sendExternal('same-visible-image-again', 'Books', 900));
+    await page.waitForFunction(() => window.__externalFixture.calls.filter(call => call.command === 'get_media_item_index').length === 2);
+    assert.equal(await page.evaluate(() => window.__firstViewerImage === document.querySelector('.pv-viewer-main img')), true, 'a new request for the already displayed file does not get stuck waiting for another image load');
+    await page.getByRole('button', {name:'閉じる', exact:true}).first().click();
+    await page.getByRole('dialog').waitFor({state:'detached'});
+    assert.match(await page.getByRole('textbox', {name:'フォルダーのパス'}).inputValue(), /Books$/);
+    assert.deepEqual(errors, []);
+    console.log('PASS actual image decodes before folder/count/rank/thumbnails; slow surrounding data never blocks image; same viewer hydrates and closes into parent');
+
+    const coldPage = await browser.newPage({viewport:{width:1440, height:900}});
+    coldPage.on('pageerror', error => errors.push(error.message));
+    await coldPage.addInitScript(installNativeFixture);
+    let releaseColdImage;
+    const coldImageBarrier = new Promise(resolve => { releaseColdImage = resolve; });
+    await coldPage.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
+    await coldPage.route('**/__priority-image.svg*', async route => {
+      await coldImageBarrier;
+      await route.fulfill({contentType:'image/svg+xml', body:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="red"/></svg>'});
+    });
+    await coldPage.goto(`http://127.0.0.1:${server.httpServer.address().port}/__external_explorer_test?cold=1`);
+    await coldPage.waitForFunction(() => Boolean(window.__externalFixture.releaseStartup));
+    const heavy = ['browse_file_system','list_media_items','get_media_page_info','get_media_item_index','get_media_thumbnails','get_media_thumbnail','get_visual_recommendations','list_tag_translations','get_library_summary','list_library_roots'];
+    assert.deepEqual(await coldPage.evaluate(commands => window.__externalFixture.calls.filter(call => commands.includes(call.command)), heavy), [], 'ordinary startup work must wait for the native launch queue');
+    await coldPage.evaluate(() => window.__externalFixture.releaseStartup());
+    await coldPage.locator('.pv-viewer-main img').waitFor({state:'attached'});
+    await coldPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.deepEqual(await coldPage.evaluate(commands => window.__externalFixture.calls.filter(call => commands.includes(call.command)), heavy), [], 'cold startup must prioritize the selected image over home shelves and aggregates');
+    releaseColdImage();
+    await coldPage.waitForFunction(() => Boolean(window.__externalFixture.releaseBrowse));
+    assert.equal(await coldPage.locator('.pv-viewer-main img').evaluate(img => img.complete && img.naturalWidth === 100), true);
+    await coldPage.evaluate(() => { window.__externalFixture.holdBrowse = false; window.__externalFixture.releaseBrowse(); });
+    await coldPage.waitForFunction(() => window.__externalFixture.calls.some(call => call.command === 'get_media_item_index'));
+    assert.deepEqual(await coldPage.evaluate(() => window.__externalFixture.unexpected), []);
+    assert.deepEqual(errors, []);
+    await coldPage.close();
+    console.log('PASS cold App startup waits for external queue, renders image before home/summary/folder queries, then hydrates the parent catalog');
+
+    // Close before the first image response; browsing must resume without ever
+    // replaying the consumed request when its delayed response finally arrives.
+    let releaseCanceledImage;
+    const canceledImageBarrier = new Promise(resolve => { releaseCanceledImage = resolve; });
+    await page.route('**/__priority-image.svg*', async route => {
+      await canceledImageBarrier;
+      await route.abort();
+    });
+    await page.evaluate(() => {
+      window.__externalFixture.holdBrowse = true;
+      window.__externalFixture.releaseBrowse = undefined;
+      window.__sendExternal('close-before-paint', 'Other', 25);
+    });
+    await page.locator('.pv-viewer-main img').waitFor({state:'attached'});
+    await page.getByRole('button', {name:'閉じる', exact:true}).first().click();
+    await page.waitForFunction(() => Boolean(window.__externalFixture.releaseBrowse));
+    await page.evaluate(() => { window.__externalFixture.holdBrowse = false; window.__externalFixture.releaseBrowse(); });
+    releaseCanceledImage();
+    await page.waitForFunction(() => document.querySelector('[aria-label="フォルダーのパス"]').value.endsWith('Other'));
+    await tick();
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    assert.deepEqual(errors, []);
+    console.log('PASS closing before image load resumes parent browsing and never reopens a canceled viewer');
+  } else {
   await open("deep-first", "Books", 900);
   assert.equal(await ranks(), 1);
   const beforeClose = await page.evaluate(() => window.__externalFixture.calls.filter(call => call.command === "list_media_items").map(call => call.args.query.offset));
@@ -221,6 +343,7 @@ try {
   assert.deepEqual(await page.evaluate(() => window.__externalFixture.unexpected), []);
   assert.deepEqual(errors, []);
   console.log("PASS canonical extended drive root, modal-aware forward, back/forward after close, no duplicate opens or runtime errors");
+  }
 } finally {
   await browser?.close();
   await server.close();

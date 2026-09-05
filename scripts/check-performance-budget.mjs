@@ -18,8 +18,9 @@ const budgets = {
   largestApplicationChunkBytes: 450 * 1024,
   largestWorkerChunkBytes: 1300 * 1024,
   // PDF.js 6.2.108's security update adds ~9.5 KiB to its lazy renderer/worker.
-  // Allow only that dependency cost; keep all startup and chunk limits intact.
-  totalAssetBytes: 2610 * 1024,
+  // 0.2.6 adds up to 4 KiB for staged external-open hydration and release notes.
+  // Startup and individual chunk limits stay unchanged.
+  totalAssetBytes: 2614 * 1024,
 };
 
 function fail(message) {

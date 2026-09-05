@@ -292,6 +292,9 @@ export type MediaViewerProps = {
   onCurrentIdChange?: (mediaId: string, item?: MediaItem, index?: number) => void;
   /** Preserve an explicit cross-format/cross-folder input order, such as an OS file-open batch. */
   preserveItemOrder?: boolean;
+  /** External request ID: decode selected media before mounting recommendations. */
+  prioritizeVisual?: string;
+  onVisualReady?: (mediaId: string) => void;
 };
 
 type ActionButtonProps = {
@@ -3042,9 +3045,18 @@ export function MediaViewer({
   onRemove,
   onCurrentIdChange,
   preserveItemOrder = false,
+  prioritizeVisual,
+  onVisualReady,
 }: MediaViewerProps) {
-  const translateTag = useTagTranslations();
   const [activeId, setActiveId] = useState(currentId);
+  const [paintedId, setPaintedId] = useState<string>();
+  const surroundingsReady = !prioritizeVisual || paintedId === activeId;
+  const visualReadyCallback = useRef(onVisualReady);
+  visualReadyCallback.current = onVisualReady;
+  const priorityRef = useRef(prioritizeVisual);
+  priorityRef.current = prioritizeVisual;
+  const paintFrames = useRef<number[]>([]);
+  const translateTag = useTagTranslations(surroundingsReady);
   const [recommendationItems, setRecommendationItems] = useState<MediaItem[]>([]);
   const collectionKey = collection ? JSON.stringify([collection.query, collection.revision]) : "";
   const [collectionItems, setCollectionItems] = useState<Map<number, MediaItem>>(
@@ -3100,6 +3112,29 @@ export function MediaViewer({
   const [gifFrameError, setGifFrameError] = useState<string>();
   const [ascii2dStatus, setAscii2dStatus] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const handleMediaLoading = useCallback((next: boolean) => {
+    setLoading(next);
+    paintFrames.current.forEach(cancelAnimationFrame);
+    paintFrames.current = [];
+    if (next || !priorityRef.current) return;
+    // The load/error callback precedes paint. Yield two frames before any
+    // folder queries or recommendation work can compete with that first frame.
+    paintFrames.current.push(requestAnimationFrame(() => {
+      paintFrames.current.push(requestAnimationFrame(() => {
+        paintFrames.current = [];
+        setPaintedId(activeId);
+      }));
+    }));
+  }, [activeId]);
+  useEffect(() => () => {
+    paintFrames.current.forEach(cancelAnimationFrame);
+    paintFrames.current = [];
+  }, [activeId]);
+  useEffect(() => {
+    // Reopening the same already-painted file must release the new request too;
+    // its unchanged img source will not necessarily emit another load event.
+    if (prioritizeVisual && paintedId === activeId) visualReadyCallback.current?.(activeId);
+  }, [activeId, paintedId, prioritizeVisual]);
   const [busyAction, setBusyAction] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -3361,6 +3396,7 @@ export function MediaViewer({
   }, [imageContextMenu]);
 
   useEffect(() => {
+    if (!surroundingsReady) return;
     let active = true;
     void getJsonPreference<ViewerInfoLayout>(
       VIEWER_INFO_LAYOUT_KEY,
@@ -3372,9 +3408,10 @@ export function MediaViewer({
       setRecommendSheetOpen(nextLayout === "sidebar");
     });
     return () => { active = false; };
-  }, []);
+  }, [surroundingsReady]);
 
   useEffect(() => {
+    if (!surroundingsReady) return;
     let active = true;
     void loadViewerControlPreferences().then((preferences) => {
       if (active) setViewerControlPreferences(preferences);
@@ -3388,7 +3425,7 @@ export function MediaViewer({
       active = false;
       window.removeEventListener(VIEWER_CONTROL_SETTINGS_EVENT, handleSettings);
     };
-  }, []);
+  }, [surroundingsReady]);
 
   const moveInfoLayout = useCallback((
     nextLayout: ViewerInfoLayout,
@@ -3411,6 +3448,7 @@ export function MediaViewer({
   }, [infoLayout]);
 
   useEffect(() => {
+    if (!surroundingsReady && item?.kind !== "video") return;
     let active = true;
     void loadVideoPlaybackPreferences().then((preferences) => {
       if (active) {
@@ -3430,7 +3468,7 @@ export function MediaViewer({
       active = false;
       window.removeEventListener(VIDEO_PLAYBACK_SETTINGS_EVENT, handleSettings);
     };
-  }, []);
+  }, [surroundingsReady, item?.kind]);
 
   const rememberVideoPlaybackPreferences = useCallback((
     patch: Partial<VideoPlaybackPreferences>,
@@ -3508,6 +3546,7 @@ export function MediaViewer({
   }, [isFullscreen]);
 
   useEffect(() => {
+    if (!surroundingsReady && item?.kind !== "pdf" && item?.kind !== "archive") return;
     let active = true;
     void loadBookViewerSettings().then((settings) => {
       if (!active) return;
@@ -3538,7 +3577,7 @@ export function MediaViewer({
       active = false;
       window.removeEventListener(BOOK_VIEWER_SETTINGS_EVENT, handleSettings);
     };
-  }, []);
+  }, [surroundingsReady, item?.kind]);
 
   useEffect(() => {
     if (!item) return;
@@ -4087,7 +4126,7 @@ export function MediaViewer({
           rotation={rotation}
           doubleClickZoom={viewerControlPreferences.doubleClickZoom}
           shortcutsEnabled={!showTagEditor && !showGifFrames}
-          onLoadingChange={setLoading}
+          onLoadingChange={handleMediaLoading}
           onError={setError}
           onMetadata={updateRuntimeMetadata}
           onContextMenu={(event) => {
@@ -4110,7 +4149,7 @@ export function MediaViewer({
           playbackPreferences={videoPlaybackPreferences}
           onPlaybackPreferencesChange={rememberVideoPlaybackPreferences}
           onError={setError}
-          onLoadingChange={setLoading}
+          onLoadingChange={handleMediaLoading}
           menusHidden={menusHidden}
           onMetadata={updateRuntimeMetadata}
         />
@@ -4125,7 +4164,7 @@ export function MediaViewer({
           onPageIndexChange={setPageIndex}
           canvasRefs={bookCanvasRefs}
           onPageCountChange={setPageCount}
-          onLoadingChange={setLoading}
+          onLoadingChange={handleMediaLoading}
           onError={setError}
           viewMode={bookViewMode}
           binding={bookBinding}
@@ -4304,7 +4343,7 @@ export function MediaViewer({
             {message && <div className="pv-viewer-toast" role="status">{message}</div>}
             {error && <div className="pv-viewer-toast is-error" role="alert">{error}<button type="button" onClick={() => setError(undefined)}><Icon name="close" /></button></div>}
           </main>
-          {!menusHidden && (
+          {!menusHidden && surroundingsReady && (
             <MediaInfoSidebar
               item={item}
               items={availableItems}
@@ -4326,7 +4365,7 @@ export function MediaViewer({
           )}
         </div>
 
-        {!menusHidden && viewerRailItemCount > 0 && (
+        {!menusHidden && surroundingsReady && viewerRailItemCount > 0 && (
           <MediaThumbnailRail
             itemCount={viewerRailItemCount}
             currentIndex={viewerRailCurrentIndex}

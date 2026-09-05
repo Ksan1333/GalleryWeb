@@ -13,6 +13,7 @@ type UseExternalMediaOpenOptions = {
   enabled: boolean;
   onOpen: (batch: ExternalMediaOpenBatch) => void;
   onError: (message: string) => void;
+  onInitialDrain?: () => void;
 };
 
 const MAX_REMEMBERED_REQUESTS = 64;
@@ -28,11 +29,14 @@ export function useExternalMediaOpen({
   enabled,
   onOpen,
   onError,
+  onInitialDrain,
 }: UseExternalMediaOpenOptions): void {
   const onOpenRef = useRef(onOpen);
   const onErrorRef = useRef(onError);
   onOpenRef.current = onOpen;
   onErrorRef.current = onError;
+  const onInitialDrainRef = useRef(onInitialDrain);
+  onInitialDrainRef.current = onInitialDrain;
 
   useEffect(() => {
     if (!enabled || !isTauriRuntime()) return;
@@ -41,6 +45,7 @@ export function useExternalMediaOpen({
     let unlisten: (() => void) | undefined;
     let draining = false;
     let drainAgain = false;
+    let initialDrainDone = false;
     const handledRequestIds = new Set<string>();
 
     const rememberRequest = (requestId: string) => {
@@ -88,6 +93,10 @@ export function useExternalMediaOpen({
           }
         } finally {
           draining = false;
+          if (!disposed && !initialDrainDone) {
+            initialDrainDone = true;
+            onInitialDrainRef.current?.();
+          }
           // An event can arrive after the loop condition but before the async
           // task settles. Re-enter once so that wake-up is not lost.
           if (!disposed && drainAgain) drain();

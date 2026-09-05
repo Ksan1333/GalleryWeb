@@ -25,6 +25,7 @@ import {
   getPreferences,
   getRuntimeInfo,
   invalidateMediaCatalogCache,
+  isTauriRuntime,
   listLibraryRoots,
   listMediaItems,
   pickLibraryRoot,
@@ -201,12 +202,19 @@ function App() {
   const [catalogRefreshVersion, setCatalogRefreshVersion] = useState(0);
   const [externalXUrl, setExternalXUrl] = useState<string>();
   const [externalMediaBatch, setExternalMediaBatch] = useState<ExternalMediaOpenBatch>();
+  const [externalStartupChecked, setExternalStartupChecked] = useState(!isTauriRuntime());
+  const [externalVisualReadyId, setExternalVisualReadyId] = useState<string>();
+  const startupWorkReady = externalStartupChecked && (!externalMediaBatch || externalVisualReadyId === externalMediaBatch.requestId);
+  const startupWorkReadyRef = useRef(startupWorkReady);
+  startupWorkReadyRef.current = startupWorkReady;
   const [explorerNavigationRequest, setExplorerNavigationRequest] = useState<ExplorerRequest>();
   const externalTarget = useMemo(() => externalMediaBatch ? externalExplorerTarget(externalMediaBatch) : undefined, [externalMediaBatch]);
   const [backgroundUiReady, setBackgroundUiReady] = useState(false);
   const [tutorialReopenRequestId, setTutorialReopenRequestId] = useState(0);
 
-  useEffect(() => scheduleDeferredUi(() => setBackgroundUiReady(true)), []);
+  useEffect(() => {
+    if (startupWorkReady) return scheduleDeferredUi(() => setBackgroundUiReady(true));
+  }, [startupWorkReady]);
 
   useEffect(() => {
     let active = true;
@@ -491,6 +499,7 @@ function App() {
     enabled: true,
     onOpen: handleExternalMediaOpen,
     onError: handleExternalMediaError,
+    onInitialDrain: () => setExternalStartupChecked(true),
   });
 
   useEffect(() => {
@@ -515,6 +524,8 @@ function App() {
             message: `新しいメディアを${inserted.toLocaleString("ja-JP")}件追加しました。`,
           });
         }
+        // The ready transition refreshes these aggregates after the image.
+        if (!startupWorkReadyRef.current) return;
         void Promise.all([getLibrarySummary(), listLibraryRoots()]).then(([summaryResult, rootsResult]) => {
           if (disposed) return;
           if (!summaryResult.error) setSummary(summaryResult.data);
@@ -610,7 +621,7 @@ function App() {
   useEffect(() => {
     // Visible favorites must not wait behind whole-library counts. This
     // effect runs before refresh; catalog revisions still revalidate it.
-    if (section !== "home") return;
+    if (section !== "home" || !startupWorkReady) return;
     let active = true;
     // Keep the previous shelf while revalidating counts/favorites instead of
     // briefly replacing every loaded image with the loading placeholder.
@@ -626,7 +637,7 @@ function App() {
       if (result.error) setError((current) => current ?? result.error);
     });
     return () => { active = false; };
-  }, [section, catalogRefreshVersion, summary.favorites]);
+  }, [section, catalogRefreshVersion, summary.favorites, startupWorkReady]);
 
   const openHomeFolder = useCallback((folder: FolderActivityRecord) => {
     if (folder.navigationKey === "all") {
@@ -663,8 +674,8 @@ function App() {
   }, []);
 
   useEffect(() => {
-    void refresh(false);
-  }, [refresh]);
+    if (startupWorkReady) void refresh(false);
+  }, [refresh, startupWorkReady]);
 
   async function addFolder() {
     const operation = startOperation({
@@ -1037,11 +1048,13 @@ function App() {
   }
 
   function content() {
+    if (!externalStartupChecked && !externalMediaBatch) return <div className="empty-panel" role="status">ファイルを確認しています…</div>;
     if (section === "home") return home();
     if (section === "gallery") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="GALLERY" title="ギャラリー" description="優先フォルダー配下のメディアだけを表示します。動画・ブックの表示は設定で変更できます。" kinds={galleryMediaKinds} priorityOnly compactFileLayout advancedGallerySearch viewerIncludesAllMedia tagNavigation={tagGalleryNavigation} emptyTitle="優先フォルダーのメディアはまだありません" emptyDescription="全フォルダーで優先読み込みに追加するか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "allFolders") return <FileSystemBrowser refreshVersion={catalogRefreshVersion} onDataChanged={refreshSummary} onPriorityChanged={refreshPriorityScope}
       navigationRequest={explorerNavigationRequest}
       openRequest={externalTarget ? { requestId: externalTarget.request.requestId, item: externalTarget.item } : undefined}
+      onOpenRequestReady={() => setExternalVisualReadyId(externalMediaBatch?.requestId)}
       onOpenRequestClose={() => { setExternalMediaBatch(undefined); setExplorerNavigationRequest(undefined); void refreshSummary(); }} />;
     if (section === "folders") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="images" eyebrow="IMAGES" title="画像" description="画像とGIFだけを、元のフォルダー構成ごとに表示します。" kinds={IMAGE_MEDIA_KINDS} emptyTitle="画像フォルダーはまだありません" emptyDescription="全フォルダーから画像やGIFのある場所を開いてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "videos") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="videos" eyebrow="VIDEOS" title="動画" description="動画をフォルダー単位で整理して表示します。" kinds={VIDEO_MEDIA_KINDS} emptyTitle="動画はまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;

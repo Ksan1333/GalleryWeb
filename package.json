@@ -1,7 +1,7 @@
 {
   "name": "galleryweb",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "scripts": {
     "dev": "vite --configLoader runner",
@@ -21,6 +21,7 @@
     "test:external-file-open": "node --test scripts/test-external-file-open.mjs scripts/test-file-associations.mjs",
     "test:explorer-navigation": "node --test scripts/test-explorer-navigation.mjs",
     "test:external-explorer": "node scripts/test-external-explorer.mjs",
+    "test:external-first-paint": "node scripts/test-external-explorer.mjs --first-paint",
     "test:settings": "node --test scripts/test-settings-access.mjs",
     "test:gallery-consistency": "node --test scripts/test-gallery-consistency.mjs scripts/test-priority-gallery.mjs",
     "test:book-viewer": "node --test scripts/test-book-navigation.mjs scripts/test-viewer-dialog.mjs scripts/test-book-page-cache.mjs",

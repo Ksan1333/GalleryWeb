@@ -62,6 +62,7 @@ jobs:
           npm run test:filesystem-layout
           npm run test:startup-performance
           npm run test:external-explorer
+          npm run test:external-first-paint
           npm run test:pdf-book
 
       - name: Verify Rust formatting

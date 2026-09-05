@@ -112,6 +112,7 @@ function appContent(section) {
   return execute(`${declarations[0].getText()}\nmodule.exports = content();`, {
     section, catalogRefreshVersion: 0, galleryMediaKinds: ["image", "gif"], tagGalleryNavigation: undefined,
     explorerNavigationRequest: undefined, externalTarget: undefined,
+    externalStartupChecked: true, externalMediaBatch: undefined,
     refreshSummary() {}, refreshPriorityScope() {}, addFolder() {},
     MediaCollection: "MediaCollection", FileSystemBrowser: "FileSystemBrowser", FolderMediaCollection: "FolderMediaCollection",
     IMAGE_MEDIA_KINDS: ["image", "gif"], VIDEO_MEDIA_KINDS: ["video"], BOOK_MEDIA_KINDS: ["pdf", "archive"],
@@ -134,6 +135,8 @@ function fileSystemCollectionProps() {
     MediaCollection: "MediaCollection", revision: 0,
     EXPLORER_MEDIA_KINDS: ["image", "gif", "video", "pdf", "archive"],
     path: "X:\\visited", navigationRequest: undefined, openRequest: undefined, onOpenRequestClose() {},
+    deferFolder: false, loadedListing: {},
+    sameExplorerPath: (left, right) => left === right, currentOpenRequest: undefined,
     listing: { rootId: "visited-root", relativeFolder: "", path: "X:\\visited", folders: [] },
   }).props;
 }

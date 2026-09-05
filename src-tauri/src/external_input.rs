@@ -2,7 +2,7 @@ use std::{
     collections::{HashSet, VecDeque},
     ffi::OsStr,
     path::Path,
-    sync::Mutex,
+    sync::{Condvar, Mutex},
 };
 
 use reqwest::Url;
@@ -32,9 +32,27 @@ struct PendingExternalInput {
 #[derive(Default)]
 pub struct ExternalInputState {
     pending: Mutex<PendingExternalInput>,
+    startup_pending: Mutex<bool>,
+    startup_ready: Condvar,
 }
 
 impl ExternalInputState {
+    pub fn with_startup_pending(pending: bool) -> Self {
+        Self {
+            startup_pending: Mutex::new(pending),
+            ..Self::default()
+        }
+    }
+
+    pub fn finish_startup(&self) {
+        let mut pending = self
+            .startup_pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *pending = false;
+        self.startup_ready.notify_all();
+    }
+
     pub fn take_pending_x_url(&self) -> Result<Option<String>, String> {
         self.pending
             .lock()
@@ -101,6 +119,17 @@ impl ExternalInputState {
     }
 
     pub fn take_pending_external_media(&self) -> Result<Vec<ExternalMediaInput>, String> {
+        // Called on a blocking worker, never on the UI/async executor. A slow
+        // startup path must not look like an empty queue and start home loading.
+        let startup = self
+            .startup_pending
+            .lock()
+            .map_err(|_| "External startup state is unavailable".to_owned())?;
+        drop(
+            self.startup_ready
+                .wait_while(startup, |pending| *pending)
+                .map_err(|_| "External startup state is unavailable".to_owned())?,
+        );
         self.pending
             .lock()
             .map(|mut pending| pending.pending_media.drain(..).collect())
@@ -445,6 +474,53 @@ mod tests {
         );
         assert_eq!(state.take_pending_external_media().unwrap().len(), 1);
         assert_eq!(state.take_pending_x_url().unwrap(), None);
+    }
+
+    #[test]
+    fn startup_drain_waits_for_input_validation_before_reporting_an_empty_queue() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let source = media_file(directory.path(), "startup.jpg");
+        let state = Arc::new(ExternalInputState::with_startup_pending(true));
+        let worker_state = Arc::clone(&state);
+        let (started, waiting) = mpsc::channel();
+        let (finished, result) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            finished
+                .send(worker_state.take_pending_external_media())
+                .unwrap();
+        });
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            result.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        state.ingest_arguments([source]).unwrap();
+        state.finish_startup();
+        let items = result
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "startup.jpg");
+        worker.join().unwrap();
+        assert!(state.take_pending_external_media().unwrap().is_empty());
+    }
+
+    #[test]
+    fn startup_without_supported_media_releases_the_empty_queue() {
+        let state = ExternalInputState::with_startup_pending(true);
+        state.ingest_arguments(["--ignored"]).unwrap();
+        state.finish_startup();
+        assert!(state.take_pending_external_media().unwrap().is_empty());
+        assert!(
+            ExternalInputState::default()
+                .take_pending_external_media()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

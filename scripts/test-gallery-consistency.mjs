@@ -145,20 +145,25 @@ test("all scoped collection viewers default to paging and seed out-of-cache curr
 
 const openEffect = find((node) => ts.isCallExpression(node) && node.expression.getText() === "useEffect"
   && node.arguments[0].getText().includes("getMediaItemIndex(request.item.id"));
+const immediateOpenEffect = find((node) => ts.isCallExpression(node) && node.expression.getText() === "useEffect"
+  && node.arguments[0].getText().includes("setSelected(openRequest.item)"));
 function runOpenEffect(state, getMediaItemIndex) {
-  return execute(`module.exports = (${openEffect.arguments[0].getText()})();`, {
+  const context = {
     openRequest: state.request, handledOpenRequestId: state.handled,
+    positionedOpenRequestId: state.positioned, deferCatalog: Boolean(state.deferred),
     displayPreferencesLoaded: true, catalogReadyQueryKey: "query", catalogFailedQueryKey: state.countFailed ? "query" : "", queryKey: "query",
     baseQuery: state.query, viewerReturnTarget: state.target,
     getMediaItemIndex, setSelectedOutsideCollection: (value) => { state.outside = value; },
     setSelected: (value) => { state.selected = value; state.opens += 1; },
     setError: (value) => { state.error = value; },
-  });
+  };
+  execute(`module.exports = (${immediateOpenEffect.arguments[0].getText()})();`, context);
+  return execute(`module.exports = (${openEffect.arguments[0].getText()})();`, { ...context, selected: state.selected });
 }
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 function requestState() {
   return { request: { requestId: "request-1", item: { id: "file-1" } }, query: { folderPath: "folder" },
-    handled: { current: undefined }, target: { current: undefined }, opens: 0 };
+    handled: { current: undefined }, positioned: { current: undefined }, target: { current: undefined }, opens: 0 };
 }
 test("external-open resolves one SQL rank, restores target and consumes each request only once", async () => {
   const state = requestState();
@@ -182,8 +187,9 @@ test("external-open discards stale results and never fabricates a filtered-out p
   cleanup();
   finish({ data: 10 });
   await tick();
-  assert.equal(stale.opens, 0);
-  assert.equal(stale.handled.current, undefined);
+  assert.equal(stale.opens, 1, "file is already visible before its rank request");
+  assert.equal(stale.positioned.current, undefined);
+  assert.equal(stale.target.current, undefined);
   const filtered = requestState();
   runOpenEffect(filtered, async () => ({ data: null }));
   await tick();
@@ -199,4 +205,13 @@ test("external file still opens in isolation when folder aggregate fails", () =>
   assert.equal(state.selected.id, "file-1");
   assert.equal(state.outside, true);
   assert.equal(state.target.current, undefined);
+});
+
+test("external file opens before any deferred folder aggregation or rank lookup", () => {
+  const state = requestState();
+  state.deferred = true;
+  runOpenEffect(state, () => { throw new Error("Rank work must wait for the visual"); });
+  assert.equal(state.selected.id, "file-1");
+  assert.equal(state.outside, true);
+  assert.equal(state.positioned.current, undefined);
 });
