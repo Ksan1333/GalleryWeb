@@ -2414,6 +2414,108 @@ fn take_pending_x_url(
     state.take_pending_x_url()
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExternalMediaOpenBatch {
+    request_id: String,
+    items: Vec<MediaItem>,
+    current_id: String,
+}
+
+fn import_external_media_item(
+    state: &AppState,
+    input: &external_input::ExternalMediaInput,
+) -> Result<MediaItem, String> {
+    let path = PathBuf::from(&input.path);
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("「{}」を開けません: {error}", input.name))?;
+    if !canonical.is_file() {
+        return Err(format!("「{}」はファイルではありません。", input.name));
+    }
+    let (kind, _, _) = catalog::classify_media(&canonical)
+        .ok_or_else(|| format!("「{}」の形式には対応していません。", input.name))?;
+    if kind != input.kind {
+        return Err(format!(
+            "「{}」の形式が開く前に変更されました。",
+            input.name
+        ));
+    }
+    let parent = canonical
+        .parent()
+        .ok_or_else(|| format!("「{}」の親フォルダーを確認できません。", input.name))?;
+    let file_name = canonical
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "ファイル名をUnicodeとして読み取れません。".to_owned())?;
+    let scope = file_browser::ensure_media_catalog_scope(state, parent)?;
+    catalog::reconcile_changed_paths(state, &scope.root_id, std::slice::from_ref(&canonical))?;
+    let relative_path = if scope.relative_folder.is_empty() {
+        file_name.to_owned()
+    } else {
+        format!(
+            "{}/{file_name}",
+            scope.relative_folder.trim_end_matches('/')
+        )
+    };
+    catalog::get_media_item_by_catalog_path(state, &scope.root_id, &relative_path)?
+        .ok_or_else(|| format!("「{}」をPixVaultへ読み込めませんでした。", input.name))
+}
+
+#[tauri::command]
+async fn take_pending_external_media(
+    app: tauri::AppHandle,
+    external_input_state: State<'_, external_input::ExternalInputState>,
+) -> Result<Option<ExternalMediaOpenBatch>, String> {
+    let pending = external_input_state.take_pending_external_media()?;
+    if pending.is_empty() {
+        return Ok(None);
+    }
+    let worker_app = app.clone();
+    let (mut items, failures) = run_catalog_worker("External media open", move || {
+        let state = worker_app.state::<AppState>();
+        let mut items = Vec::with_capacity(pending.len());
+        let mut failures = Vec::new();
+        let mut affected_roots = HashSet::new();
+        for input in pending {
+            match import_external_media_item(&state, &input) {
+                Ok(item) => {
+                    affected_roots.insert(item.root_id.clone());
+                    items.push(item);
+                }
+                Err(error) => failures.push(error),
+            }
+        }
+        for root_id in affected_roots {
+            media_folders::invalidate_folder_hierarchy_cache(&state, Some(&root_id))?;
+        }
+        Ok((items, failures))
+    })
+    .await?;
+    if items.is_empty() {
+        return Err(failures
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "外部ファイルをPixVaultで開けませんでした。".to_owned()));
+    }
+    if !failures.is_empty() {
+        diagnostics::record("external-media-open-warning", &failures.join(" | "));
+    }
+    for item in &items {
+        app.asset_protocol_scope()
+            .allow_file(&item.absolute_path)
+            .map_err(|error| format!("外部ファイルの表示を許可できません: {error}"))?;
+    }
+    attach_existing_thumbnail_paths(&app, &mut items)?;
+    invalidate_media_presence_cache();
+    let current_id = items[0].id.clone();
+    Ok(Some(ExternalMediaOpenBatch {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        items,
+        current_id,
+    }))
+}
+
 #[tauri::command]
 fn show_windows_notification(
     app: tauri::AppHandle,
@@ -4178,10 +4280,49 @@ fn import_catalog_data(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let startup_arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     tauri::Builder::default()
+        .manage(external_input::ExternalInputState::default())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            background_activity::note_foreground_activity();
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            // Canonicalizing a disconnected drive can block. Keep all path IO
+            // out of the single-instance callback and wake JS only after the
+            // durable native queue has accepted the arguments.
+            let secondary_app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let accepted_media =
+                    match secondary_app.try_state::<external_input::ExternalInputState>() {
+                        Some(state) => match state.ingest_arguments(args.iter()) {
+                            Ok(accepted) => accepted,
+                            Err(error) => {
+                                diagnostics::record("external-input-error", &error);
+                                0
+                            }
+                        },
+                        None => {
+                            diagnostics::record(
+                                "external-input-error",
+                                "External input state was unavailable for a secondary launch",
+                            );
+                            0
+                        }
+                    };
+                if accepted_media > 0 {
+                    let _ = secondary_app.emit("pixvault://external-media-open", ());
+                }
+                // Also wake the existing X downloader integration. Taking an
+                // empty queue is harmless and avoids trusting event payloads.
+                let _ = secondary_app.emit("pixvault://external-x-open", ());
+            });
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             background_activity::note_foreground_activity();
             let data_directory = app.path().app_local_data_dir().map_err(|error| {
                 std::io::Error::other(format!(
@@ -4238,12 +4379,30 @@ pub fn run() {
                 diagnostics::record("protocol-error", &error);
             }
             app.manage(state);
-            app.manage(external_input::ExternalInputState::from_process_arguments());
             app.manage(ai::AiRuntimeState::new(ai_model_directory));
             app.manage(system_metrics::SystemMetricsState::default());
             folder_watcher::start(app.handle().clone(), database_path.clone());
             schedule_startup_missing_recovery(app.handle().clone(), database_path.clone());
             schedule_startup_diagnostics(database_path);
+            if !startup_arguments.is_empty() {
+                let startup_app = app.handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let accepted_media = match startup_app
+                        .state::<external_input::ExternalInputState>()
+                        .ingest_arguments(startup_arguments)
+                    {
+                        Ok(accepted) => accepted,
+                        Err(error) => {
+                            diagnostics::record("external-input-error", &error);
+                            0
+                        }
+                    };
+                    if accepted_media > 0 {
+                        let _ = startup_app.emit("pixvault://external-media-open", ());
+                    }
+                    let _ = startup_app.emit("pixvault://external-x-open", ());
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -4263,6 +4422,7 @@ pub fn run() {
             cancel_thumbnail_precache,
             notify_foreground_activity,
             take_pending_x_url,
+            take_pending_external_media,
             show_windows_notification,
             pick_library_root,
             pick_drawing_reference,
@@ -4339,6 +4499,56 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod external_media_open_tests {
+    use super::{catalog, external_input, import_external_media_item};
+    use crate::db::AppState;
+
+    #[test]
+    fn opening_one_file_imports_only_that_file_into_a_non_priority_scope() {
+        let directory = tempfile::tempdir().expect("external media directory");
+        let selected = directory.path().join("selected.webp");
+        let sibling = directory.path().join("sibling.jpg");
+        std::fs::write(&selected, b"selected").expect("write selected file");
+        std::fs::write(&sibling, b"sibling").expect("write sibling file");
+        let input = external_input::parse_external_media_input(selected.as_os_str())
+            .expect("parse external media");
+        let state = AppState::in_memory().expect("in-memory catalog");
+
+        let imported = import_external_media_item(&state, &input).expect("import external media");
+
+        assert_eq!(imported.file_name, "selected.webp");
+        assert_eq!(imported.kind, "image");
+        assert_eq!(catalog::list_media_items(&state, None).unwrap().len(), 1);
+        let roots = catalog::list_library_roots(&state).expect("list roots");
+        assert_eq!(roots.len(), 1);
+        assert!(!roots[0].is_priority);
+    }
+
+    #[test]
+    fn opening_from_an_existing_root_reuses_the_media_id_and_catalog_path() {
+        let directory = tempfile::tempdir().expect("external media directory");
+        let nested = directory.path().join("books");
+        std::fs::create_dir(&nested).expect("create nested directory");
+        let selected = nested.join("volume.zip");
+        std::fs::write(&selected, b"not opened by this catalog test").expect("write selected file");
+        let state = AppState::in_memory().expect("in-memory catalog");
+        let root = catalog::add_library_root(&state, directory.path().to_str().unwrap())
+            .expect("add priority root");
+        let input = external_input::parse_external_media_input(selected.as_os_str())
+            .expect("parse external media");
+
+        let first = import_external_media_item(&state, &input).expect("first import");
+        let second = import_external_media_item(&state, &input).expect("second import");
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.root_id, root.id);
+        assert_eq!(first.relative_path, "books/volume.zip");
+        assert_eq!(first.kind, "zip");
+        assert_eq!(catalog::list_media_items(&state, None).unwrap().len(), 1);
+    }
 }
 
 #[cfg(test)]

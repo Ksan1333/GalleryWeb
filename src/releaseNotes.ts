@@ -11,6 +11,17 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.2.4",
+    date: "2026-09-05",
+    title: "Windowsからメディアを直接開く",
+    changes: [
+      "エクスプローラーから画像・GIF・WebP・動画・ZIP/CBZ・PDFをPixVaultで直接開けるよう対応",
+      "PixVaultが起動済みの場合は新しいプロセスを増やさず、開いているウィンドウのビュワーへ受け渡し",
+      "開いたファイルだけを差分読み込みし、大きなフォルダー全体の走査を待たずに表示",
+      "複数ファイルを同時に渡した場合は指定順のビュワー一覧として表示",
+    ],
+  },
+  {
     version: "0.2.3",
     date: "2026-09-04",
     title: "ギャラリーを優先フォルダーのみに限定",

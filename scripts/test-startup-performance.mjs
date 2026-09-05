@@ -171,7 +171,9 @@ function installNativeFixture() {
         return command === "get_media_thumbnails" ? ids.map((mediaId) => ({ mediaId, thumbnailPath: image })) : image;
       }
       if (command === "get_ai_analysis_status") return { phase: "idle", categoryCounts: [], previewTags: [], cleanupPending: false };
-      if (command === "get_thumbnail_precache_status" || command === "take_pending_x_url") return null;
+      if (command === "get_thumbnail_precache_status"
+        || command === "take_pending_x_url"
+        || command === "take_pending_external_media") return null;
       if (command === "list_media_folders" || command === "list_tags") return [];
       if (command === "list_tag_translations") return {};
       stats.unexpected.push(command);

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PixVault for Windows",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "identifier": "com.ninji.galleryweb",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -32,6 +32,38 @@
   "bundle": {
     "active": true,
     "targets": "nsis",
+    "fileAssociations": [
+      {
+        "ext": ["jpg", "jpeg", "png", "webp", "bmp", "heic", "heif", "avif", "tif", "tiff"],
+        "name": "PixVault.Image",
+        "description": "PixVault image",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["gif"],
+        "name": "PixVault.GIF",
+        "description": "PixVault GIF image",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "mpeg", "mpg", "ts", "m2ts"],
+        "name": "PixVault.Video",
+        "description": "PixVault video",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["zip", "cbz"],
+        "name": "PixVault.BookArchive",
+        "description": "PixVault ZIP or CBZ book",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["pdf"],
+        "name": "PixVault.PDF",
+        "description": "PixVault PDF book",
+        "role": "Viewer"
+      }
+    ],
     "resources": [
       "resources/THIRD_PARTY_AI_NOTICES.txt",
       "resources/THIRD_PARTY_NOTICES.txt"
@@ -45,7 +77,8 @@
       "nsis": {
         "installMode": "currentUser",
         "languages": ["Japanese", "English"],
-        "startMenuFolder": "PixVault"
+        "startMenuFolder": "PixVault",
+        "installerHooks": "windows/installer-hooks.nsh"
       }
     },
     "icon": [

@@ -15,6 +15,7 @@ import {
 import { SelectMenu } from "./components/Ui";
 import { useAiOperationBridge } from "./hooks/useAiOperationBridge";
 import { useThumbnailCacheOperationBridge } from "./hooks/useThumbnailCacheOperationBridge";
+import { useExternalMediaOpen } from "./hooks/useExternalMediaOpen";
 import {
   addLibraryRoot,
   emptyLibrarySummary,
@@ -30,6 +31,7 @@ import {
   scanLibrary,
   setJsonPreference,
   takePendingXUrl,
+  type ExternalMediaOpenBatch,
   type LibraryRoot,
   type LibrarySummary,
   type MediaKind,
@@ -195,6 +197,7 @@ function App() {
     useState<(AiAnalysisPanelRequest & { requestId: number })>();
   const [catalogRefreshVersion, setCatalogRefreshVersion] = useState(0);
   const [externalXUrl, setExternalXUrl] = useState<string>();
+  const [externalMediaBatch, setExternalMediaBatch] = useState<ExternalMediaOpenBatch>();
   const [backgroundUiReady, setBackgroundUiReady] = useState(false);
   const [tutorialReopenRequestId, setTutorialReopenRequestId] = useState(0);
 
@@ -453,6 +456,26 @@ function App() {
     void refreshSummary();
   }, [publishCatalogChange, refreshSummary]);
 
+  const handleExternalMediaOpen = useCallback((batch: ExternalMediaOpenBatch) => {
+    setExternalMediaBatch(batch);
+    publishCatalogChange();
+  }, [publishCatalogChange]);
+
+  const handleExternalMediaError = useCallback((message: string) => {
+    setError(message);
+    notifyApp({
+      tone: "error",
+      title: "ファイルを開けませんでした",
+      message,
+    });
+  }, []);
+
+  useExternalMediaOpen({
+    enabled: true,
+    onOpen: handleExternalMediaOpen,
+    onError: handleExternalMediaError,
+  });
+
   useEffect(() => {
     if (!nativeAvailable) return;
     let disposed = false;
@@ -495,15 +518,52 @@ function App() {
   useEffect(() => {
     if (!nativeAvailable) return;
     let active = true;
-    void takePendingXUrl().then((result) => {
-      if (!active || !result.data) return;
-      setExternalXUrl(result.data);
-      setSection("downloads");
-    });
+    let unlisten: (() => void) | undefined;
+    let draining = false;
+    let drainAgain = false;
+    const takePending = () => {
+      if (draining) {
+        drainAgain = true;
+        return;
+      }
+      draining = true;
+      void (async () => {
+        try {
+          do {
+            drainAgain = false;
+            let latestUrl: string | null = null;
+            while (active) {
+              const result = await takePendingXUrl();
+              if (result.error || !result.data) break;
+              latestUrl = result.data;
+            }
+            if (active && latestUrl) {
+              setExternalMediaBatch(undefined);
+              void refreshSummary();
+              setExternalXUrl(latestUrl);
+              setSection("downloads");
+            }
+          } while (active && drainAgain);
+        } finally {
+          draining = false;
+          if (active && drainAgain) takePending();
+        }
+      })();
+    };
+    void listen<unknown>("pixvault://external-x-open", takePending)
+      .then((stop) => {
+        if (!active) stop();
+        else {
+          unlisten = stop;
+          takePending();
+        }
+      })
+      .catch(() => takePending());
     return () => {
       active = false;
+      unlisten?.();
     };
-  }, [nativeAvailable]);
+  }, [nativeAvailable, refreshSummary]);
 
   useEffect(() => {
     const onDragOver = (event: DragEvent) => {
@@ -1032,10 +1092,58 @@ function App() {
             <button className="icon-button" type="button" aria-label="すべてのフォルダーを再スキャン" title="すべてのフォルダーを再スキャン" onClick={() => void scan()} disabled={loading || busy || !nativeAvailable || roots.length === 0}><Icon name="refresh" className={busy ? "rotating" : undefined} /></button>
           </div>
         </header>
-        <Suspense fallback={<div className="empty-panel"><span className="spinner" /><p>読み込み中…</p></div>}>{content()}</Suspense>
+        <Suspense fallback={<div className="empty-panel"><span className="spinner" /><p>読み込み中…</p></div>}>
+          {externalMediaBatch ? null : content()}
+        </Suspense>
       </main>
       <OperationTray />
-      {aiAnalysisPanelRequest && (
+      {externalMediaBatch && (
+        <Suspense fallback={<div className="empty-panel"><span className="spinner" /><p>ファイルを開いています…</p></div>}>
+          <MediaViewer
+            key={externalMediaBatch.requestId}
+            items={externalMediaBatch.items}
+            currentId={externalMediaBatch.currentId}
+            preserveItemOrder
+            onClose={() => {
+              setExternalMediaBatch(undefined);
+              void refreshSummary();
+            }}
+            onCurrentIdChange={(mediaId) => {
+              setExternalMediaBatch((current) => current
+                ? { ...current, currentId: mediaId }
+                : current);
+            }}
+            onItemPatch={(mediaId, patch) => {
+              setExternalMediaBatch((current) => current
+                ? {
+                    ...current,
+                    items: current.items.map((item) => item.id === mediaId
+                      ? { ...item, ...patch }
+                      : item),
+                  }
+                : current);
+              void refreshSummary();
+            }}
+            onRemove={(mediaId) => {
+              setExternalMediaBatch((current) => {
+                if (!current) return current;
+                const items = current.items.filter((item) => item.id !== mediaId);
+                if (items.length === 0) return undefined;
+                return {
+                  ...current,
+                  items,
+                  currentId: items.some((item) => item.id === current.currentId)
+                    ? current.currentId
+                    : items[0].id,
+                };
+              });
+              publishCatalogChange();
+              void refreshSummary();
+            }}
+          />
+        </Suspense>
+      )}
+      {aiAnalysisPanelRequest && !externalMediaBatch && (
         <Suspense fallback={null}>
           <AIAnalysisModal
             key={aiAnalysisPanelRequest.requestId}
@@ -1052,7 +1160,7 @@ function App() {
       {(backgroundUiReady || aiAnalysisPanelRequest) && (
         <Suspense fallback={null}>
           <AiAnalysisMonitor hidden={Boolean(aiAnalysisPanelRequest)} />
-          {backgroundUiReady && (
+          {backgroundUiReady && !externalMediaBatch && (
             <FirstRunTutorial reopenRequestId={tutorialReopenRequestId} />
           )}
         </Suspense>

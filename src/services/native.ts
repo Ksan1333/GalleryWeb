@@ -148,6 +148,12 @@ export type MediaItem = {
   pageCount?: number;
 };
 
+export type ExternalMediaOpenBatch = {
+  requestId: string;
+  items: MediaItem[];
+  currentId: string;
+};
+
 export type Tag = {
   id: string;
   name: string;
@@ -836,6 +842,22 @@ function normalizeMedia(value: unknown): MediaItem {
   };
 }
 
+function normalizeExternalMediaOpenBatch(value: unknown): ExternalMediaOpenBatch | null {
+  if (!value || typeof value !== "object") return null;
+  const batch = record(value);
+  const requestId = text(batch.requestId);
+  const items = Array.isArray(batch.items) ? batch.items.map(normalizeMedia) : [];
+  if (!requestId || items.length === 0) return null;
+  const requestedCurrentId = text(batch.currentId);
+  return {
+    requestId,
+    items,
+    currentId: items.some((item) => item.id === requestedCurrentId)
+      ? requestedCurrentId
+      : items[0].id,
+  };
+}
+
 function normalizeRoot(value: unknown): LibraryRoot {
   const item = record(value);
   const path = text(item.path);
@@ -1030,6 +1052,15 @@ export async function takePendingXUrl(): Promise<NativeResult<string | null>> {
     undefined,
     null,
     (value) => typeof value === "string" && value.trim() ? value.trim() : null,
+  );
+}
+
+export async function takePendingExternalMedia(): Promise<NativeResult<ExternalMediaOpenBatch | null>> {
+  return normalizedCall(
+    "take_pending_external_media",
+    undefined,
+    null,
+    normalizeExternalMediaOpenBatch,
   );
 }
 

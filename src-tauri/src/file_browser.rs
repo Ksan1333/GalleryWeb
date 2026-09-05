@@ -23,6 +23,17 @@ pub struct FolderListing {
     pub priority_path: Option<String>,
 }
 
+pub struct MediaCatalogScope {
+    pub root_id: String,
+    pub relative_folder: String,
+}
+
+struct ResolvedCatalogScope {
+    root_id: String,
+    relative_folder: String,
+    priority_path: Option<String>,
+}
+
 fn display_path(path: &Path) -> String {
     let value = path.to_string_lossy();
     if let Some(value) = value.strip_prefix(r"\\?\UNC\") {
@@ -36,18 +47,98 @@ pub fn priority_root(state: &AppState, path: &str) -> Result<LibraryRoot, String
     let canonical = Path::new(path)
         .canonicalize()
         .map_err(|error| format!("フォルダーを開けません: {error}"))?;
-    let existing = catalog::list_library_roots(state)?
+    let roots = catalog::list_library_roots(state)?;
+    if let Some(root) = roots
+        .iter()
+        .find(|root| Path::new(&root.path) == canonical)
+        .cloned()
+    {
+        // Browsing or an external file-open may already have created this
+        // exact catalog scope as non-priority. Persist the explicit promotion
+        // instead of merely returning an optimistic UI value.
+        catalog::set_root_priority(state, &root.id, true)?;
+        return Ok(LibraryRoot {
+            is_priority: true,
+            ..root
+        });
+    }
+    let existing = roots
         .into_iter()
         .filter(|root| root.is_priority && canonical.starts_with(&root.path))
         .max_by_key(|root| root.path.len());
     let root = match existing {
         Some(root) => root,
-        None => catalog::add_library_root(state, path)?,
+        None => catalog::add_library_root_with_priority(state, path, Some(true))?,
     };
-    catalog::set_root_priority(state, &root.id, true)?;
     Ok(LibraryRoot {
         is_priority: true,
         ..root
+    })
+}
+
+/// Reuses the narrowest catalog root covering a directory, or creates a
+/// non-priority root for it. Unlike `browse`, this does not enumerate any
+/// children, so opening an associated file never scans a large folder first.
+pub fn ensure_media_catalog_scope(
+    state: &AppState,
+    path: &Path,
+) -> Result<MediaCatalogScope, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("フォルダーを開けません: {error}"))?;
+    if !canonical.is_dir() {
+        return Err("メディアの親フォルダーを開けません。".to_owned());
+    }
+    let scope = resolve_catalog_scope(state, &canonical)?;
+    Ok(MediaCatalogScope {
+        root_id: scope.root_id,
+        relative_folder: scope.relative_folder,
+    })
+}
+
+fn resolve_catalog_scope(
+    state: &AppState,
+    canonical: &Path,
+) -> Result<ResolvedCatalogScope, String> {
+    let roots = catalog::list_enabled_library_root_records(state)?;
+    let covering = roots
+        .iter()
+        .filter(|root| canonical.starts_with(&root.path))
+        .max_by_key(|root| root.path.len());
+    let (root_id, root_path) = if let Some(root) = covering {
+        (root.id.clone(), PathBuf::from(&root.path))
+    } else {
+        let root = catalog::add_library_root_with_priority(
+            state,
+            &canonical.to_string_lossy(),
+            Some(false),
+        )?;
+        (root.id, canonical.to_path_buf())
+    };
+    let relative_folder = canonical
+        .strip_prefix(&root_path)
+        .map_err(|error| error.to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+    // Persist visited scopes for non-recursive monitoring even under an
+    // existing non-priority root. This does not duplicate catalog ownership.
+    let hash = format!("{:x}", Sha256::digest(relative_folder.as_bytes()));
+    let visit = serde_json::json!({ "rootId": root_id, "relativeFolder": relative_folder, "path": canonical.to_string_lossy() });
+    state.database.lock()?.execute(
+        "INSERT INTO preferences(key, value_json, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+         WHERE preferences.value_json <> excluded.value_json",
+        rusqlite::params![format!("folder.visited.{root_id}.{}", &hash[..32]), visit.to_string(), catalog::now_millis()],
+    ).map_err(|error| error.to_string())?;
+    let priority_path = roots
+        .iter()
+        .filter(|root| root.is_priority && canonical.starts_with(&root.path))
+        .max_by_key(|root| root.path.len())
+        .map(|root| display_path(Path::new(&root.path)));
+    Ok(ResolvedCatalogScope {
+        root_id,
+        relative_folder,
+        priority_path,
     })
 }
 
@@ -86,41 +177,10 @@ pub fn browse(state: &AppState, path: Option<&str>, scan: bool) -> Result<Folder
         }
     }
     folders.sort_by_cached_key(|folder| folder.display_name.to_lowercase());
-    let roots = catalog::list_enabled_library_root_records(state)?;
-    let covering = roots
-        .iter()
-        .filter(|root| canonical.starts_with(&root.path))
-        .max_by_key(|root| root.path.len());
-    let (root_id, root_path) = if let Some(root) = covering {
-        (root.id.clone(), PathBuf::from(&root.path))
-    } else {
-        let root = catalog::add_library_root(state, &canonical.to_string_lossy())?;
-        catalog::set_root_priority(state, &root.id, false)?;
-        (root.id, canonical.clone())
-    };
-    let relative_folder = canonical
-        .strip_prefix(&root_path)
-        .map_err(|error| error.to_string())?
-        .to_string_lossy()
-        .replace('\\', "/");
-    // Persist visited scopes for non-recursive monitoring even under an
-    // existing non-priority root. This does not duplicate catalog ownership.
-    let hash = format!("{:x}", Sha256::digest(relative_folder.as_bytes()));
-    let visit = serde_json::json!({ "rootId": root_id, "relativeFolder": relative_folder, "path": canonical.to_string_lossy() });
-    state.database.lock()?.execute(
-        "INSERT INTO preferences(key, value_json, updated_at) VALUES (?1, ?2, ?3)
-         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
-         WHERE preferences.value_json <> excluded.value_json",
-        rusqlite::params![format!("folder.visited.{root_id}.{}", &hash[..32]), visit.to_string(), catalog::now_millis()],
-    ).map_err(|error| error.to_string())?;
+    let scope = resolve_catalog_scope(state, &canonical)?;
     if scan {
-        catalog::scan_folder(state, &root_id, &relative_folder)?;
+        catalog::scan_folder(state, &scope.root_id, &scope.relative_folder)?;
     }
-    let priority_path = roots
-        .iter()
-        .filter(|root| root.is_priority && canonical.starts_with(&root.path))
-        .max_by_key(|root| root.path.len())
-        .map(|root| display_path(Path::new(&root.path)));
     Ok(FolderListing {
         path: Some(display_path(&canonical)),
         parent_path: canonical
@@ -128,9 +188,9 @@ pub fn browse(state: &AppState, path: Option<&str>, scan: bool) -> Result<Folder
             .filter(|path| !path.as_os_str().is_empty())
             .map(display_path),
         folders,
-        root_id: Some(root_id),
-        relative_folder,
-        priority_path,
+        root_id: Some(scope.root_id),
+        relative_folder: scope.relative_folder,
+        priority_path: scope.priority_path,
     })
 }
 
@@ -182,6 +242,24 @@ mod tests {
         let child = browse(&state, dir.path().join("nested").to_str(), true).unwrap();
         assert_eq!(child.root_id, listing.root_id);
         assert_eq!(catalog::list_media_items(&state, None).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn explicitly_promoting_an_existing_non_priority_root_persists_the_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::in_memory().unwrap();
+        let listing = browse(&state, dir.path().to_str(), false).unwrap();
+        let root_id = listing.root_id.expect("catalog scope");
+        assert!(!catalog::list_library_roots(&state).unwrap()[0].is_priority);
+
+        let promoted = priority_root(&state, dir.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(promoted.id, root_id);
+        assert!(promoted.is_priority);
+        let persisted = catalog::list_library_roots(&state).unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].id, root_id);
+        assert!(persisted[0].is_priority);
     }
 
     #[test]

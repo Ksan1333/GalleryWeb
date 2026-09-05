@@ -311,6 +311,8 @@ export type MediaViewerProps = {
   onItemPatch: (mediaId: string, patch: Partial<MediaItem>) => void;
   onRemove: (mediaId: string) => void;
   onCurrentIdChange?: (mediaId: string, item?: MediaItem, index?: number) => void;
+  /** Preserve an explicit cross-format/cross-folder input order, such as an OS file-open batch. */
+  preserveItemOrder?: boolean;
 };
 
 type ActionButtonProps = {
@@ -3062,6 +3064,7 @@ export function MediaViewer({
   onItemPatch,
   onRemove,
   onCurrentIdChange,
+  preserveItemOrder = false,
 }: MediaViewerProps) {
   const translateTag = useTagTranslations();
   const [activeId, setActiveId] = useState(currentId);
@@ -3267,11 +3270,12 @@ export function MediaViewer({
   }, [availableItems, item]);
   const viewerRailItems = useMemo(() => {
     if (!item) return [];
+    if (preserveItemOrder) return items;
     if (item.kind === "image" || item.kind === "gif") return imageItems;
     if (item.kind === "video") return videoItems;
     if (item.kind === "pdf" || item.kind === "archive") return bookItems;
     return [];
-  }, [bookItems, imageItems, item, videoItems]);
+  }, [bookItems, imageItems, item, items, preserveItemOrder, videoItems]);
   const currentBookIndex = item ? bookItems.findIndex((candidate) => candidate.id === item.id) : -1;
   const updateRuntimeMetadata = useCallback((patch: ViewerRuntimeMetadata) => {
     setRuntimeMetadata((current) => ({ ...current, ...patch }));

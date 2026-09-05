@@ -75,6 +75,14 @@ pub fn now_millis() -> i64 {
 }
 
 pub fn add_library_root(state: &AppState, input_path: &str) -> Result<LibraryRoot, String> {
+    add_library_root_with_priority(state, input_path, None)
+}
+
+pub(crate) fn add_library_root_with_priority(
+    state: &AppState,
+    input_path: &str,
+    priority: Option<bool>,
+) -> Result<LibraryRoot, String> {
     let canonical = canonical_directory(input_path)?;
     let path = path_to_string(&canonical)?;
     let display_name = canonical
@@ -135,8 +143,22 @@ pub fn add_library_root(state: &AppState, input_path: &str) -> Result<LibraryRoo
                 params![root.id, prefix.chars().count() as i64, ancestor_id, pattern]).map_err(|error| error.to_string())?;
         }
     }
-    let result = query_library_root_by_path(&connection, &path)?
+    let mut result = query_library_root_by_path(&connection, &path)?
         .ok_or_else(|| "Folder catalog not found".to_owned())?;
+    if let Some(priority) = priority {
+        connection
+            .execute(
+                "INSERT INTO preferences(key, value_json, updated_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
+                params![
+                    format!("folder.priority.{}", result.id),
+                    if priority { "true" } else { "false" },
+                    now
+                ],
+            )
+            .map_err(|error| format!("Failed to save library root priority: {error}"))?;
+        result.is_priority = priority;
+    }
     connection.commit().map_err(|error| error.to_string())?;
     Ok(result)
 }
@@ -542,6 +564,29 @@ pub(crate) fn get_media_items_by_ids(
             .map_err(|error| format!("Failed to read media ids: {error}"))?
     };
     materialize_media_rows(&connection, rows)
+}
+
+pub(crate) fn get_media_item_by_catalog_path(
+    state: &AppState,
+    root_id: &str,
+    relative_path: &str,
+) -> Result<Option<MediaItem>, String> {
+    let media_id = state
+        .database
+        .lock()?
+        .query_row(
+            "SELECT id
+             FROM media_items
+             WHERE root_id = ?1 AND relative_path = ?2 AND is_missing = 0",
+            params![root_id, relative_path],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Failed to find externally opened media: {error}"))?;
+    let Some(media_id) = media_id else {
+        return Ok(None);
+    };
+    Ok(get_media_items_by_ids(state, &[media_id])?.pop())
 }
 
 fn materialize_media_rows(
