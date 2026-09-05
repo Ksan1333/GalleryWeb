@@ -111,6 +111,7 @@ function appContent(section) {
   assert.equal(declarations.length, 1);
   return execute(`${declarations[0].getText()}\nmodule.exports = content();`, {
     section, catalogRefreshVersion: 0, galleryMediaKinds: ["image", "gif"], tagGalleryNavigation: undefined,
+    explorerNavigationRequest: undefined, externalTarget: undefined,
     refreshSummary() {}, refreshPriorityScope() {}, addFolder() {},
     MediaCollection: "MediaCollection", FileSystemBrowser: "FileSystemBrowser", FolderMediaCollection: "FolderMediaCollection",
     IMAGE_MEDIA_KINDS: ["image", "gif"], VIDEO_MEDIA_KINDS: ["video"], BOOK_MEDIA_KINDS: ["pdf", "archive"],
@@ -131,6 +132,8 @@ function fileSystemCollectionProps() {
   assert.equal(components.length, 1);
   return expression(components[0], {
     MediaCollection: "MediaCollection", revision: 0,
+    EXPLORER_MEDIA_KINDS: ["image", "gif", "video", "pdf", "archive"],
+    path: "X:\\visited", navigationRequest: undefined, openRequest: undefined, onOpenRequestClose() {},
     listing: { rootId: "visited-root", relativeFolder: "", path: "X:\\visited", folders: [] },
   }).props;
 }
@@ -141,7 +144,7 @@ function viewerCollection(query) {
   const attribute = viewer[0].attributes.properties.find((node) => ts.isJsxAttribute(node) && node.name.getText() === "collection");
   assert.ok(attribute && ts.isJsxExpression(attribute.initializer));
   return expression(attribute.initializer.expression, {
-    viewerIncludesAllMedia: true, baseQuery: query, catalogRevision: 3, pageInfo: { totalCount: 220 },
+    viewerIncludesAllMedia: true, selectedOutsideCollection: false, baseQuery: query, catalogRevision: 3, pageInfo: { totalCount: 220 },
     selected: { id: "media-0" }, mediaIndexById: new Map([["media-0", 0]]),
     viewerReturnTarget: { current: { index: 0 } }, itemByIndex: new Map(),
   });

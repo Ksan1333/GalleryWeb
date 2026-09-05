@@ -9,6 +9,8 @@ import {
 } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useViewerFullscreen } from "../hooks/useViewerFullscreen";
+import { bookSeekKeyPage, bookSeekPosition } from "../services/bookNavigation";
+import { activateViewerDialog } from "../services/viewerDialog";
 import type {
   PDFDocumentLoadingTask,
   PDFDocumentProxy,
@@ -86,7 +88,6 @@ const BOOK_PAGE_CACHE_LOOK_AHEAD = 12;
 const BOOK_PAGE_CACHE_INTERACTION_QUIET_MS = 420;
 const BOOK_SEEK_PREVIEW_DEBOUNCE_MS = 100;
 const MAX_PDF_PAGE_DISPLAY_CACHE_ENTRIES = 48;
-const MAX_BOOK_PAGE_SOURCE_CACHE_ENTRIES = 512;
 const MAX_BOOK_IMAGE_CACHE_ENTRIES = 18;
 const BOOK_WHEEL_COOLDOWN_MS = 260;
 const VIDEO_PLAYBACK_SAVE_DEBOUNCE_MS = 180;
@@ -159,25 +160,6 @@ function archivePageCacheKey(
   return `${mediaId}\u0000${revision ?? ""}\u0000${pageIndex}`;
 }
 
-function rememberCachedArchivePageSource(
-  mediaId: string,
-  revision: string | undefined,
-  pageIndex: number,
-  path: string,
-): string | undefined {
-  const source = localAssetUrl(path);
-  if (!source) return undefined;
-  const key = archivePageCacheKey(mediaId, revision, pageIndex);
-  if (!archivePageSourceCache.has(key)) {
-    archivePageSourceCache.set(key, Promise.resolve(source));
-  }
-  trimOldestCacheEntry(
-    archivePageSourceCache,
-    MAX_BOOK_PAGE_SOURCE_CACHE_ENTRIES,
-  );
-  return source;
-}
-
 async function getCachedArchivePageSource(
   mediaId: string,
   revision: string | undefined,
@@ -193,17 +175,14 @@ async function getCachedArchivePageSource(
     const source = localAssetUrl(result.data);
     if (!source) throw new Error("ZIPブックの画像ページを開けませんでした。");
     return source;
-  }).catch((error: unknown) => {
+  }).finally(() => {
+    // Native disk entries can be evicted. Deduplicate in-flight requests only;
+    // every later visit revalidates the path before loading an image.
     if (archivePageSourceCache.get(key) === pending) {
       archivePageSourceCache.delete(key);
     }
-    throw error;
   });
   archivePageSourceCache.set(key, pending);
-  trimOldestCacheEntry(
-    archivePageSourceCache,
-    MAX_BOOK_PAGE_SOURCE_CACHE_ENTRIES,
-  );
   return pending;
 }
 
@@ -2606,6 +2585,7 @@ function BookViewer({
   }, [pdfDocument]);
 
   const getDisplayPageSource = useCallback((bookPage: number): Promise<string> => {
+    if (item.kind === "archive") return getCachedArchivePageSource(item.id, item.modifiedAt, bookPage);
     const cached = pageDisplayCacheRef.current.get(bookPage);
     if (cached) {
       pageDisplayCacheRef.current.delete(bookPage);
@@ -2620,12 +2600,6 @@ function BookViewer({
     const generation = bookCacheGenerationRef.current;
     let pending: Promise<string>;
     pending = (async () => {
-      if (item.kind === "archive") {
-        const source = await getCachedArchivePageSource(item.id, item.modifiedAt, bookPage);
-        if (bookCacheGenerationRef.current !== generation) throw new Error("ブックのキャッシュ処理を中止しました。");
-        return source;
-      }
-
       const page = await getPdfPage(bookPage);
       try {
         const baseViewport = page.getViewport({ scale: 1 });
@@ -2668,6 +2642,7 @@ function BookViewer({
   }, [getPdfPage, item.id, item.kind, item.modifiedAt]);
 
   const getPagePreviewSource = useCallback(async (bookPage: number): Promise<string> => {
+    if (item.kind === "archive") return getDisplayPageSource(bookPage);
     const cached = pagePreviewCacheRef.current.get(bookPage);
     if (cached) {
       pagePreviewCacheRef.current.delete(bookPage);
@@ -2678,7 +2653,7 @@ function BookViewer({
     const previewSource = await getDisplayPageSource(bookPage);
     pagePreviewCacheRef.current.set(bookPage, previewSource);
     return previewSource;
-  }, [getDisplayPageSource]);
+  }, [getDisplayPageSource, item.kind]);
 
   useEffect(() => {
     setPageCount(Math.max(0, item.pageCount ?? 0));
@@ -2908,13 +2883,7 @@ function BookViewer({
         await waitForInteractionQuiet();
         await waitForBookCacheIdle();
         if (!active) return;
-        const result = await precacheArchiveBookPages(item.id, pages);
-        if (!active || result.error) return;
-        for (const entry of result.data) {
-          if (entry.path) {
-            rememberCachedArchivePageSource(item.id, item.modifiedAt, entry.pageIndex, entry.path);
-          }
-        }
+        await precacheArchiveBookPages(item.id, pages);
       };
       void cacheArchiveWindow();
       return () => { active = false; };
@@ -2985,7 +2954,7 @@ function BookViewer({
         {seeking && (
           <div
             className="pv-book-seek-preview"
-            style={{ left: `clamp(66px, ${pageCount > 1 ? seekPreviewPage / (pageCount - 1) * 100 : 0}%, calc(100% - 66px))` }}
+            style={{ left: `clamp(66px, ${bookSeekPosition(seekPreviewPage, pageCount, binding)}%, calc(100% - 66px))` }}
             aria-hidden="true"
           >
             <div>
@@ -2996,20 +2965,28 @@ function BookViewer({
             <b>{seekPreviewPage + 1} / {pageCount}</b>
           </div>
         )}
-        <span>{pageCount > 0 ? "1" : "—"}</span>
+        <span>{pageCount > 0 ? (binding === "right" ? pageCount : 1) : "—"}</span>
         <div className="pv-book-seek-track">
           <input
             type="range"
+            dir={binding === "right" ? "rtl" : "ltr"}
             min={0}
             max={Math.max(0, pageCount - 1)}
             step={1}
             value={seeking ? seekPreviewPage : Math.min(pageIndex, Math.max(0, pageCount - 1))}
             disabled={pageCount <= 1}
             aria-label="ブックのページ位置"
-            aria-valuetext={`${(seeking ? seekPreviewPage : pageIndex) + 1} / ${pageCount}`}
+            aria-valuetext={`${pageCount > 0 ? (seeking ? seekPreviewPage : pageIndex) + 1 : 0}ページ / 全${pageCount}ページ`}
             style={{
               "--pv-seek-progress": `${pageCount > 1 ? (seeking ? seekPreviewPage : pageIndex) / (pageCount - 1) * 100 : 0}%`,
             } as React.CSSProperties}
+            onKeyDown={(event) => {
+              const next = bookSeekKeyPage(event.key, pageIndex, pageCount, binding, viewMode === "spread" ? 2 : 1);
+              if (next === undefined) return;
+              event.preventDefault();
+              event.stopPropagation();
+              commitSeekPage(next);
+            }}
             onPointerDown={() => {
               seekPointerActiveRef.current = true;
               setSeekPreviewPage(pageIndex);
@@ -3041,7 +3018,7 @@ function BookViewer({
               key={`${anchor}-${index}`}
               type="button"
               className="pv-book-seek-anchor"
-              style={{ left: `${anchor / (pageCount - 1) * 100}%` }}
+              style={{ left: `${bookSeekPosition(anchor, pageCount, binding)}%` }}
               title={`${anchor + 1}ページへ戻る`}
               aria-label={`シークアンカー ${anchor + 1}ページへ戻る`}
               onClick={() => commitSeekPage(anchor)}
@@ -3050,7 +3027,7 @@ function BookViewer({
             </button>
           ))}
         </div>
-        <span>{pageCount > 0 ? pageCount : "—"}</span>
+        <span>{pageCount > 0 ? (binding === "right" ? 1 : pageCount) : "—"}</span>
       </div>
     </div>
   );
@@ -3094,6 +3071,7 @@ export function MediaViewer({
   }, [collectionRailItems, items, recommendationItems]);
   const item = availableItems.find((candidate) => candidate.id === activeId);
   const viewerShellRef = useRef<HTMLElement>(null);
+  const viewerBackdropRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const bookCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -3578,10 +3556,20 @@ export function MediaViewer({
   }, [item?.id]);
 
   useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const dialogs = viewerBackdropRef.current?.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]');
+    const dialog = dialogs?.item(dialogs.length - 1);
+    if (dialog) return activateViewerDialog(dialog);
+  }, [Boolean(item), showGifFrames, showTagEditor]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const target = event.target instanceof Element ? event.target : undefined;
       if (event.key === "Escape") {
+        // A dropdown owns its first Escape; its document listener closes it.
+        if (target?.closest('[role="listbox"], [role="menu"], [role="combobox"][aria-expanded="true"]')) return;
+        if (imageContextMenu) return;
+        event.preventDefault();
         if (isFullscreen) {
           event.preventDefault();
           void changeFullscreen(false).catch((caught: unknown) => setError(String(caught)));
@@ -3593,16 +3581,23 @@ export function MediaViewer({
         else onClose();
         return;
       }
-      if (!item || showTagEditor || showGifFrames) return;
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+      if (!item || showTagEditor || showGifFrames || showBookSettings || showBookmarkList) return;
+      if (target?.closest('input, textarea, select, button, a[href], [contenteditable="true"], [role="listbox"], [role="combobox"], [role="menu"]')) return;
       const pageStep = bookViewMode === "spread" ? 2 : 1;
+      if ((item.kind === "pdf" || item.kind === "archive") && ["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+        event.preventDefault();
+        setPageIndex((current) => bookSeekKeyPage(event.key, current, pageCount, bookBinding, pageStep) ?? current);
+        return;
+      }
       if (event.key === "ArrowLeft") {
-        if (item.kind === "pdf" || item.kind === "archive") setPageIndex((current) => Math.max(0, current - pageStep));
-        else if (item.kind === "video") videoRef.current && (videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - viewerControlPreferences.videoSeekSeconds));
+        if (item.kind === "video") {
+          event.preventDefault();
+          videoRef.current && (videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - viewerControlPreferences.videoSeekSeconds));
+        }
       }
       if (event.key === "ArrowRight") {
-        if (item.kind === "pdf" || item.kind === "archive") setPageIndex((current) => Math.min(Math.max(0, pageCount - 1), current + pageStep));
-        else if (item.kind === "video" && videoRef.current) {
+        if (item.kind === "video" && videoRef.current) {
+          event.preventDefault();
           videoRef.current.currentTime = Math.min(videoRef.current.duration || Number.MAX_SAFE_INTEGER, videoRef.current.currentTime + viewerControlPreferences.videoSeekSeconds);
         }
       }
@@ -3613,10 +3608,9 @@ export function MediaViewer({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
-      document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [bookViewMode, changeFullscreen, isFullscreen, closeGifFrames, infoLayout, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds]);
+  }, [bookBinding, bookViewMode, changeFullscreen, isFullscreen, closeGifFrames, imageContextMenu, infoLayout, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds]);
 
   useEffect(() => {
     if (!message) return;
@@ -3665,8 +3659,8 @@ export function MediaViewer({
 
   if (!item) {
     return (
-      <div className="pv-viewer-backdrop" role="presentation" onMouseDown={onClose}>
-        <section className="pv-viewer-shell pv-viewer-missing" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+      <div ref={viewerBackdropRef} className="pv-viewer-backdrop" role="presentation" onMouseDown={onClose}>
+        <section ref={viewerShellRef} tabIndex={-1} className="pv-viewer-shell pv-viewer-missing" role="dialog" aria-modal="true" aria-label="メディアが見つかりません" onMouseDown={(event) => event.stopPropagation()}>
           <Unavailable icon="warning">選択したメディアが見つかりません。</Unavailable>
           <button type="button" className="pv-viewer-primary" onClick={onClose}>閉じる</button>
         </section>
@@ -4145,11 +4139,12 @@ export function MediaViewer({
   })();
 
   return (
-    <div className="pv-viewer-backdrop" role="presentation" onMouseDown={onClose}>
+    <div ref={viewerBackdropRef} className="pv-viewer-backdrop" role="presentation" onMouseDown={onClose}>
       <section
         ref={viewerShellRef}
         className={`pv-viewer-shell rating-${ageRating.toLowerCase()}${isFullscreen ? " is-fullscreen" : ""}${menusHidden ? " menus-hidden" : ""}`}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby={menusHidden ? undefined : "pv-viewer-title"}
         aria-label={menusHidden ? item.name : undefined}

@@ -176,6 +176,22 @@ function relativeLuminance(color: string): number {
   }, 0);
 }
 
+export function contrastRatio(foreground: string, background: string): number {
+  const left = relativeLuminance(foreground);
+  const right = relativeLuminance(background);
+  return (Math.max(left, right) + 0.05) / (Math.min(left, right) + 0.05);
+}
+
+export function accentForeground(accent: string): string {
+  const dark = contrastRatio("#151119", accent);
+  const light = contrastRatio("#ffffff", accent);
+  if (dark >= 4.5 && dark >= light) return "#151119";
+  if (light >= 4.5) return "#ffffff";
+  // Near the mid-luminance boundary the tinted dark color can fail both
+  // choices. Pure black provides the required contrast there.
+  return "#000000";
+}
+
 function selectedPalette(settings: ThemeSettings): ThemePalette {
   if (settings.preset === "custom") return settings.custom;
   if (settings.preset !== "default") {
@@ -202,7 +218,7 @@ export function applyThemeSettings(settings: ThemeSettings, cache = true): void 
   root.style.setProperty("--text", colors.text);
   root.style.setProperty("--muted", colors.muted);
   root.style.setProperty("--accent", colors.accent);
-  root.style.setProperty("--accent-contrast", relativeLuminance(colors.accent) > 0.46 ? "#151119" : "#ffffff");
+  root.style.setProperty("--accent-contrast", accentForeground(colors.accent));
   root.style.setProperty("--accent-strong", `color-mix(in srgb, ${colors.accent} 76%, ${appearance === "dark" ? "white" : "black"})`);
   root.style.setProperty("--danger", colors.danger);
   root.style.setProperty("--success", colors.success);

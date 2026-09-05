@@ -18,6 +18,7 @@ import {
   getArchiveCover,
   getMediaImagePreview,
   getMediaPageInfo,
+  getMediaItemIndex,
   invalidateMediaCatalogCache,
   invalidateMediaQueryCache,
   isTauriRuntime,
@@ -90,6 +91,7 @@ import {
 import { openAiAnalysisPanel } from "../services/aiPanel";
 import {
   defaultGalleryDisplayPreferences,
+  galleryCompactCardWidths,
   galleryGroupOptions,
   galleryDisplayPreferencesEvent,
   loadGalleryDisplayPreferences,
@@ -100,7 +102,7 @@ import {
   type GalleryGridSize,
   type GalleryGroupMode,
   type GallerySortOrder,
-} from "./GalleryDisplaySettings";
+} from "../services/galleryDisplayPreferences";
 import {
   EmptyState,
   LoadingPanel,
@@ -143,6 +145,8 @@ type MediaCollectionProps = {
   onDataChanged?: () => void;
   tagNavigation?: TagGalleryNavigationRequest;
   refreshVersion?: number;
+  openRequest?: { requestId: string; item: MediaItem };
+  onOpenRequestClose?: () => void;
 };
 
 type GalleryContextMenuState = {
@@ -1033,20 +1037,20 @@ function addBoundedMediaPage(
 
 function gridMetrics(size: GalleryGridSize, width: number, compactFileLayout = false): GridMetrics {
   if (compactFileLayout) {
-    const targetCardWidth = 112;
-    const columns = Math.max(1, Math.min(
-      14,
-      Math.floor((Math.max(width, targetCardWidth) + VIRTUAL_GAP) / (targetCardWidth + VIRTUAL_GAP)),
-    ));
+    const targetCardWidth = galleryCompactCardWidths[size];
+    const availableWidth = Math.max(1, width);
+    const columns = Math.max(1,
+      Math.floor((availableWidth + VIRTUAL_GAP) / (targetCardWidth + VIRTUAL_GAP)),
+    );
     const cardWidth = Math.max(
       1,
-      (Math.max(width, targetCardWidth) - VIRTUAL_GAP * (columns - 1)) / columns,
+      (availableWidth - VIRTUAL_GAP * (columns - 1)) / columns,
     );
     const squareSize = Math.floor(cardWidth);
     return {
       columns,
       rowHeight: squareSize + VIRTUAL_GAP,
-      visualHeight: Math.max(62, squareSize - 36),
+      visualHeight: Math.max(1, squareSize - 40),
     };
   }
   const targetColumns: Record<GalleryGridSize, number> = {
@@ -1197,6 +1201,7 @@ const MediaCard = memo(function MediaCard({
   selectionMode,
   translateTag,
   onActivate,
+  onOpen,
   onToggleSelection,
   onFavorite,
   onRecycle,
@@ -1213,6 +1218,7 @@ const MediaCard = memo(function MediaCard({
   selectionMode: boolean;
   translateTag: (tagName: string) => string;
   onActivate: (item: MediaItem, itemIndex: number, event: ReactMouseEvent<HTMLButtonElement>) => void;
+  onOpen: (item: MediaItem, itemIndex: number) => void;
   onToggleSelection: (
     item: MediaItem,
     itemIndex: number,
@@ -1255,9 +1261,15 @@ const MediaCard = memo(function MediaCard({
         type="button"
         aria-label={selectionMode ? `${item.name}を${selected ? "選択解除" : "選択"}` : item.name}
         aria-pressed={selectionMode ? selected : undefined}
-        aria-keyshortcuts="Shift+Enter"
-        title={selectionMode ? "クリックで選択、Shift+クリックで範囲選択" : undefined}
+        aria-keyshortcuts="Enter Shift+Enter"
+        title={selectionMode ? "クリックで選択、Shift+クリックで範囲選択、Enterで開く" : undefined}
         onClick={(event) => onActivate(item, itemIndex, event)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!working) onOpen(item, itemIndex);
+        }}
       >
         <div className="media-visual">
           <LazyMediaVisual
@@ -1305,6 +1317,17 @@ const MediaCard = memo(function MediaCard({
         )}
       </button>
       <div className="media-card-actions">
+        {selectionMode && (
+          <button
+            type="button"
+            aria-label={`${item.name}を開く（選択を保持）`}
+            title="選択を保持して開く（Enter）"
+            disabled={working}
+            onClick={() => onOpen(item, itemIndex)}
+          >
+            <Icon name="eye" />
+          </button>
+        )}
         <button
           type="button"
           className={item.isFavorite ? "favorite active" : "favorite"}
@@ -1325,12 +1348,12 @@ const MediaCard = memo(function MediaCard({
 
 export function MediaCollection({
   eyebrow, title, description, kinds, favoritesOnly, showFavoriteKindFilter, emptyTitle, emptyDescription,
-  advancedGallerySearch = false, viewerIncludesAllMedia = false, priorityOnly = false,
+  advancedGallerySearch = false, viewerIncludesAllMedia = true, priorityOnly = false,
   initialSearch = "", initialRootId, initialFolderPath, embedded = false,
   compactFileLayout = false, onBack,
   onNavigateFolderPath, leadingFolders = [], showLeadingFolderCounts = true, onOpenLeadingFolder, favoriteFolderKeys,
   onToggleLeadingFolderFavorite, onAddFolder, onDataChanged,
-  tagNavigation, refreshVersion,
+  tagNavigation, refreshVersion, openRequest, onOpenRequestClose,
 }: MediaCollectionProps) {
   const [pages, setPages] = useState<Map<number, MediaItem[]>>(() => new Map());
   const [pageInfo, setPageInfo] = useState<MediaPageInfo>({ totalCount: 0, dateGroups: [] });
@@ -1340,11 +1363,15 @@ export function MediaCollection({
   const [rootId, setRootId] = useState(initialRootId ?? "");
   const [favoriteKind, setFavoriteKind] = useState<FavoriteKindFilter>("");
   const [displayPreferences, setDisplayPreferences] = useState(defaultGalleryDisplayPreferences);
+  const [displayPreferencesLoaded, setDisplayPreferencesLoaded] = useState(false);
+  const [catalogReadyQueryKey, setCatalogReadyQueryKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [nativeAvailable, setNativeAvailable] = useState(true);
   const [error, setError] = useState<string>();
   const [selected, setSelected] = useState<MediaItem>();
+  const [selectedOutsideCollection, setSelectedOutsideCollection] = useState(false);
+  const [catalogFailedQueryKey, setCatalogFailedQueryKey] = useState("");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<Map<string, MediaItem>>(() => new Map());
   const [selectionAnchor, setSelectionAnchor] = useState<{ mediaId: string; index: number }>();
@@ -1384,6 +1411,7 @@ export function MediaCollection({
   const quietReloadQueryKey = useRef<string | undefined>(undefined);
   const selectedMediaRef = useRef(selectedMedia);
   const viewerReturnTarget = useRef<{ mediaId: string; index: number } | undefined>(undefined);
+  const handledOpenRequestId = useRef<string | undefined>(undefined);
   const lastExternalRefreshVersion = useRef(refreshVersion);
   const rangeSelectionGeneration = useRef(0);
   const rangeSelectionOperation = useRef<ReturnType<typeof startOperation> | undefined>(undefined);
@@ -1398,7 +1426,7 @@ export function MediaCollection({
     setRangeSelectionProgress(undefined);
   }, []);
   const translateTag = useTagTranslations();
-  const gridSize = compactFileLayout ? "minimum" : displayPreferences.gridSize;
+  const gridSize = displayPreferences.gridSize;
   const { sortBy, sortDirection } = sortQuery(displayPreferences.sortOrder);
   const groupMode: GalleryGroupMode = displayPreferences.groupMode;
 
@@ -1453,7 +1481,10 @@ export function MediaCollection({
   useEffect(() => {
     let active = true;
     void loadGalleryDisplayPreferences().then((loaded) => {
-      if (active) setDisplayPreferences(loaded);
+      if (active) {
+        setDisplayPreferences(loaded);
+        setDisplayPreferencesLoaded(true);
+      }
     });
     const handlePreferences = (event: Event) => {
       const next = normalizeGalleryDisplayPreferences(
@@ -1568,6 +1599,34 @@ export function MediaCollection({
   const queryKey = useMemo(() => JSON.stringify(baseQuery), [baseQuery]);
 
   useEffect(() => {
+    if (!openRequest || handledOpenRequestId.current === openRequest.requestId
+      || !displayPreferencesLoaded || (catalogReadyQueryKey !== queryKey && catalogFailedQueryKey !== queryKey)) return;
+    let active = true;
+    const request = openRequest;
+    if (catalogFailedQueryKey === queryKey) {
+      handledOpenRequestId.current = request.requestId;
+      viewerReturnTarget.current = undefined;
+      setSelectedOutsideCollection(true);
+      setSelected(request.item);
+      return;
+    }
+    // Resolve the rank in SQLite, not by downloading every preceding page.
+    // Filters may exclude an externally opened file; still open that file, but
+    // never assign it a fabricated index in the filtered collection.
+    void getMediaItemIndex(request.item.id, baseQuery).then((result) => {
+      if (!active) return;
+      handledOpenRequestId.current = request.requestId;
+      const index = result.error ? null : result.data;
+      viewerReturnTarget.current = index === null
+        ? undefined : { mediaId: request.item.id, index };
+      setSelectedOutsideCollection(index === null);
+      setSelected(request.item);
+      if (result.error) setError(`ファイルを開きましたが、フォルダー内の位置を取得できませんでした: ${result.error}`);
+    });
+    return () => { active = false; };
+  }, [baseQuery, catalogReadyQueryKey, catalogFailedQueryKey, displayPreferencesLoaded, openRequest?.requestId, openRequest?.item, queryKey]);
+
+  useEffect(() => {
     cancelRangeSelection();
     setSelectedMedia(new Map());
     setSelectionMode(false);
@@ -1616,6 +1675,8 @@ export function MediaCollection({
     else {
       setLoading(true);
       setRefreshing(false);
+      setCatalogReadyQueryKey("");
+      setCatalogFailedQueryKey("");
     }
     setError(undefined);
     // A refresh creates a new catalog generation. Requests from the old
@@ -1679,8 +1740,10 @@ export function MediaCollection({
       currentQueryKey.current !== queryKey
       || catalogLoadGeneration.current !== loadGeneration
     ) return;
+    setCatalogFailedQueryKey(infoResult.error ? queryKey : "");
     if (!infoResult.error) {
       setPageInfo(infoResult.data);
+      setCatalogReadyQueryKey(queryKey);
       if (
         !quiet
         && hasProvisionalPage
@@ -2294,6 +2357,13 @@ export function MediaCollection({
     }
   }, [baseQuery, cancelRangeSelection, selectionAnchor]);
 
+  const openItem = useCallback((item: MediaItem, itemIndex: number) => {
+    if (bulkBusy) return;
+    viewerReturnTarget.current = { mediaId: item.id, index: itemIndex };
+    setSelectedOutsideCollection(false);
+    setSelected(item);
+  }, [bulkBusy]);
+
   const activateItem = useCallback((
     item: MediaItem,
     itemIndex: number,
@@ -2304,9 +2374,8 @@ export function MediaCollection({
       toggleMediaSelection(item, itemIndex, event);
       return;
     }
-    viewerReturnTarget.current = { mediaId: item.id, index: itemIndex };
-    setSelected(item);
-  }, [selectionMode, toggleMediaSelection]);
+    openItem(item, itemIndex);
+  }, [openItem, selectionMode, toggleMediaSelection]);
 
   const handleViewerCurrentIdChange = useCallback((
     mediaId: string,
@@ -2323,6 +2392,8 @@ export function MediaCollection({
   const closeViewerAndRestore = useCallback(() => {
     const target = viewerReturnTarget.current;
     setSelected(undefined);
+    setSelectedOutsideCollection(false);
+    if (openRequest && handledOpenRequestId.current === openRequest.requestId) onOpenRequestClose?.();
     if (!target) return;
     const host = scrollerRef.current;
     if (!host) return;
@@ -2362,7 +2433,7 @@ export function MediaCollection({
         slot?.querySelector<HTMLButtonElement>(".media-open")?.focus({ preventScroll: true });
       });
     });
-  }, [leadingFolderHeight, metrics.columns, metrics.rowHeight, virtualLayout.groups, virtualLayout.totalHeight]);
+  }, [leadingFolderHeight, metrics.columns, metrics.rowHeight, onOpenRequestClose, openRequest, virtualLayout.groups, virtualLayout.totalHeight]);
 
   const stopSelection = useCallback(() => {
     cancelRangeSelection();
@@ -2973,7 +3044,7 @@ export function MediaCollection({
                   {rangeSelectionProgress.total.toLocaleString("ja-JP")}件
                 </small>
               ) : (
-                <small>Shift+クリックで範囲選択、Ctrl+クリックで個別選択できます</small>
+                <small>Shift+クリックで範囲選択、Ctrl+クリックで個別選択、Enterまたは目のボタンで選択を保持して開く</small>
               )}
             </div>
           </div>
@@ -3243,6 +3314,7 @@ export function MediaCollection({
                         selectionMode={selectionMode}
                         translateTag={translateTag}
                         onActivate={activateItem}
+                        onOpen={openItem}
                         onToggleSelection={toggleMediaSelection}
                         onFavorite={toggleFavorite}
                         onRecycle={recycle}
@@ -3307,15 +3379,15 @@ export function MediaCollection({
               </div>
             </section>
           )}
-          {!compactFileLayout && <section>
+          <section>
             <span>サムネイルサイズ</span>
             <div className="gallery-context-options">
               {([
-                ["minimum", "最小・10列"],
-                ["small", "小・7列"],
-                ["medium", "中・5列"],
-                ["large", "大・3列"],
-                ["maximum", "最大・2列"],
+                ["minimum", "最小"],
+                ["small", "小"],
+                ["medium", "中"],
+                ["large", "大"],
+                ["maximum", "最大"],
               ] as const).map(([value, label]) => (
                 <button
                   type="button"
@@ -3329,7 +3401,7 @@ export function MediaCollection({
                 </button>
               ))}
             </div>
-          </section>}
+          </section>
           <section>
             <span>グループ化</span>
             <div className="gallery-context-options">
@@ -3399,14 +3471,18 @@ export function MediaCollection({
       {selected && (
         <Suspense fallback={null}>
           <MediaViewer
-            items={loadedItems}
+            items={selectedOutsideCollection ? [selected]
+              : loadedItems.some((candidate) => candidate.id === selected.id)
+                ? loadedItems : [...loadedItems, selected]}
             currentId={selected.id}
-            collection={viewerIncludesAllMedia ? {
+            collection={viewerIncludesAllMedia && !selectedOutsideCollection ? {
               query: baseQuery,
               revision: catalogRevision,
               totalCount: pageInfo.totalCount,
               currentIndex: mediaIndexById.get(selected.id) ?? viewerReturnTarget.current?.index ?? 0,
-              indexedItems: [...itemByIndex.entries()],
+              indexedItems: mediaIndexById.has(selected.id) || !viewerReturnTarget.current
+                ? [...itemByIndex.entries()]
+                : [...itemByIndex.entries(), [viewerReturnTarget.current.index, selected]],
             } : undefined}
             onClose={closeViewerAndRestore}
             onItemPatch={(mediaId, patch) => {

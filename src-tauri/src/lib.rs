@@ -1,6 +1,7 @@
 mod ai;
 mod ascii2d;
 mod background_activity;
+mod book_cache;
 mod catalog;
 mod db;
 mod diagnostics;
@@ -50,7 +51,7 @@ use crate::{
     },
 };
 
-pub(crate) const DATABASE_SCHEMA_VERSION: u32 = 8;
+pub(crate) const DATABASE_SCHEMA_VERSION: u32 = 9;
 const MIGRATION_FORMAT_VERSION: u32 = 1;
 const DRAWING_REFERENCES_PREFERENCE_KEY: &str = "drawing.references";
 const MAX_BOOK_COVER_BYTES: u64 = 20 * 1024 * 1024;
@@ -841,13 +842,44 @@ fn pick_x_download_folder(app: tauri::AppHandle) -> Result<Option<String>, Strin
 }
 
 #[tauri::command]
-fn get_archive_cover(
+async fn get_archive_cover(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     media_id: String,
 ) -> Result<Option<String>, String> {
     background_activity::note_foreground_activity();
     let (_root, archive_path) = catalog::resolve_media_path_for_recycle(&state, &media_id)?;
+    let data_root = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to resolve application data directory: {error}"))?;
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        let generation = archive_book_cache_generation(&media_id, &archive_path)?;
+        book_cache::with_directory(
+            &data_root,
+            book_cache::Kind::Covers,
+            &safe_cache_id(&media_id),
+            &generation,
+            |directory| {
+                let path = cache_archive_cover(&archive_path, directory)?;
+                Ok((path.clone(), path.into_iter().collect()))
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("Archive cover task failed: {error}"))??;
+    if let Some(path) = &path {
+        app.asset_protocol_scope()
+            .allow_file(path)
+            .map_err(|error| format!("Failed to allow book cover asset: {error}"))?;
+    }
+    Ok(path.and_then(|path| path.to_str().map(ToOwned::to_owned)))
+}
+
+fn cache_archive_cover(
+    archive_path: &Path,
+    cache_directory: &Path,
+) -> Result<Option<PathBuf>, String> {
     let extension = archive_path
         .extension()
         .and_then(|value| value.to_str())
@@ -857,23 +889,16 @@ fn get_archive_cover(
         return Ok(None);
     }
 
-    let cache_directory = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| format!("Failed to resolve application data directory: {error}"))?
-        .join("book-covers");
     std::fs::create_dir_all(&cache_directory)
         .map_err(|error| format!("Failed to create book cover cache: {error}"))?;
-    let safe_id: String = media_id
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect();
+    for extension in ["jpg", "jpeg", "png", "webp", "gif"] {
+        let path = cache_directory.join(format!("cover.{extension}"));
+        if path.metadata().is_ok_and(|metadata| {
+            metadata.is_file() && metadata.len() > 0 && metadata.len() <= MAX_BOOK_COVER_BYTES
+        }) {
+            return Ok(Some(path));
+        }
+    }
 
     let source = std::fs::File::open(&archive_path)
         .map_err(|error| format!("Failed to open archive {}: {error}", archive_path.display()))?;
@@ -883,7 +908,7 @@ fn get_archive_cover(
         let entry = archive
             .by_index(index)
             .map_err(|error| format!("Failed to read archive entry: {error}"))?;
-        if entry.is_dir() || entry.size() > MAX_BOOK_COVER_BYTES {
+        if entry.is_dir() || entry.size() == 0 || entry.size() > MAX_BOOK_COVER_BYTES {
             continue;
         }
         let entry_extension = std::path::Path::new(entry.name())
@@ -899,7 +924,7 @@ fn get_archive_cover(
         ) {
             continue;
         }
-        let cache_path = cache_directory.join(format!("{safe_id}.{entry_extension}"));
+        let cache_path = cache_directory.join(format!("cover.{entry_extension}"));
         if !cache_path.exists() {
             let mut bytes = Vec::with_capacity(entry.size() as usize);
             entry
@@ -909,13 +934,16 @@ fn get_archive_cover(
             if bytes.len() as u64 > MAX_BOOK_COVER_BYTES {
                 return Err("Book cover exceeds the 20 MB extraction limit".to_owned());
             }
-            std::fs::write(&cache_path, bytes)
-                .map_err(|error| format!("Failed to cache book cover: {error}"))?;
+            let temporary_path =
+                cache_directory.join(format!("cover-{}.tmp", uuid::Uuid::new_v4()));
+            let published = std::fs::write(&temporary_path, bytes)
+                .and_then(|_| std::fs::rename(&temporary_path, &cache_path));
+            if let Err(error) = published {
+                let _ = std::fs::remove_file(&temporary_path);
+                return Err(format!("Failed to cache book cover: {error}"));
+            }
         }
-        app.asset_protocol_scope()
-            .allow_file(&cache_path)
-            .map_err(|error| format!("Failed to allow book cover asset: {error}"))?;
-        return Ok(cache_path.to_str().map(ToOwned::to_owned));
+        return Ok(Some(cache_path));
     }
     Ok(None)
 }
@@ -947,14 +975,12 @@ async fn get_archive_book_page(
 ) -> Result<Option<String>, String> {
     background_activity::note_foreground_activity();
     let (_root, archive_path) = catalog::resolve_media_path_for_recycle(&state, &media_id)?;
-    let cache_root = app
+    let data_root = app
         .path()
         .app_local_data_dir()
-        .map_err(|error| format!("Failed to resolve application data directory: {error}"))?
-        .join("book-pages");
+        .map_err(|error| format!("Failed to resolve application data directory: {error}"))?;
     let entries = tauri::async_runtime::spawn_blocking(move || {
-        let cache_directory = archive_book_cache_directory(&cache_root, &media_id, &archive_path)?;
-        cache_archive_book_pages(&archive_path, &cache_directory, &[page_index])
+        cache_managed_archive_book_pages(&data_root, &media_id, &archive_path, &[page_index])
     })
     .await
     .map_err(|error| format!("Archive page extraction task failed: {error}"))??;
@@ -987,14 +1013,12 @@ async fn precache_archive_book_pages(
         ));
     }
     let (_root, archive_path) = catalog::resolve_media_path_for_recycle(&state, &media_id)?;
-    let cache_root = app
+    let data_root = app
         .path()
         .app_local_data_dir()
-        .map_err(|error| format!("Failed to resolve application data directory: {error}"))?
-        .join("book-pages");
+        .map_err(|error| format!("Failed to resolve application data directory: {error}"))?;
     let entries = tauri::async_runtime::spawn_blocking(move || {
-        let cache_directory = archive_book_cache_directory(&cache_root, &media_id, &archive_path)?;
-        cache_archive_book_pages(&archive_path, &cache_directory, &page_indices)
+        cache_managed_archive_book_pages(&data_root, &media_id, &archive_path, &page_indices)
     })
     .await
     .map_err(|error| format!("Archive page extraction task failed: {error}"))??;
@@ -1009,18 +1033,37 @@ async fn precache_archive_book_pages(
     Ok(entries)
 }
 
-fn archive_book_cache_directory(
-    cache_root: &Path,
+fn cache_managed_archive_book_pages(
+    data_root: &Path,
     media_id: &str,
     archive_path: &Path,
-) -> Result<PathBuf, String> {
+    page_indices: &[u32],
+) -> Result<Vec<ArchiveBookPageCacheEntry>, String> {
+    let generation = archive_book_cache_generation(media_id, archive_path)?;
+    book_cache::with_directory(
+        data_root,
+        book_cache::Kind::Pages,
+        &safe_cache_id(media_id),
+        &generation,
+        |directory| {
+            let entries = cache_archive_book_pages(archive_path, directory, page_indices)?;
+            let paths = entries
+                .iter()
+                .filter_map(|entry| entry.path.as_ref().map(PathBuf::from))
+                .collect();
+            Ok((entries, paths))
+        },
+    )
+}
+
+fn archive_book_cache_generation(media_id: &str, archive_path: &Path) -> Result<String, String> {
     let index_key = archive_page_index_key(archive_path)?;
-    Ok(cache_root.join(format!(
+    Ok(format!(
         "{}-{}-{}",
         safe_cache_id(media_id),
         index_key.modified_millis,
         index_key.byte_size
-    )))
+    ))
 }
 
 fn archive_page_index_key(archive_path: &Path) -> Result<ArchivePageIndexKey, String> {
@@ -3863,6 +3906,18 @@ async fn list_media_items(
 }
 
 #[tauri::command]
+async fn get_media_item_index(
+    app: tauri::AppHandle,
+    media_id: String,
+    query: Option<MediaQuery>,
+) -> Result<Option<u64>, String> {
+    run_catalog_worker("Media index", move || {
+        catalog::get_media_item_index(&app.state::<AppState>(), &media_id, query)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_visual_recommendations(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -4459,6 +4514,7 @@ pub fn run() {
             scan_library,
             get_library_summary,
             list_media_items,
+            get_media_item_index,
             get_visual_recommendations,
             get_adjacent_similarity_groups,
             get_media_items_by_ids,
@@ -4558,8 +4614,8 @@ mod archive_book_tests {
     use zip::{ZipWriter, write::SimpleFileOptions};
 
     use super::{
-        archive_page_entries, archive_page_entries_from_archive,
-        cache_archive_book_pages_with_limits, cached_archive_page_index,
+        archive_book_cache_generation, archive_page_entries, archive_page_entries_from_archive,
+        cache_archive_book_pages_with_limits, cache_archive_cover, cached_archive_page_index,
     };
 
     fn write_archive(path: &Path, entries: &[(&str, &[u8])]) {
@@ -4616,6 +4672,30 @@ mod archive_book_tests {
         assert!(cached_archive_page_index(&archive_path).is_none());
         let refreshed = archive_page_entries(&archive_path).expect("refresh changed page index");
         assert_eq!(refreshed.len(), 2);
+    }
+
+    #[test]
+    fn cover_generation_changes_when_the_archive_is_replaced() {
+        let fixture = tempfile::tempdir().expect("archive fixture directory");
+        let archive_path = fixture.path().join("book.cbz");
+        write_archive(&archive_path, &[("page1.jpg", b"old-cover")]);
+        let first_generation = archive_book_cache_generation("book-id", &archive_path).unwrap();
+        let first_directory = fixture.path().join(&first_generation);
+        let first = cache_archive_cover(&archive_path, &first_directory)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fs::read(&first).unwrap(), b"old-cover");
+        write_archive(
+            &archive_path,
+            &[("page1.jpg", b"replacement-cover-more-bytes")],
+        );
+        let second_generation = archive_book_cache_generation("book-id", &archive_path).unwrap();
+        assert_ne!(first_generation, second_generation);
+        let second = cache_archive_cover(&archive_path, &fixture.path().join(second_generation))
+            .unwrap()
+            .unwrap();
+        assert_eq!(fs::read(second).unwrap(), b"replacement-cover-more-bytes");
+        assert!(archive_path.exists());
     }
 
     #[test]

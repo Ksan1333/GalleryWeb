@@ -12,12 +12,12 @@ const hookCode = ts.transpileModule(source, {
 }).outputText;
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-test("App opens one external viewer and preserves mixed file order", () => {
+test("App delegates external files to the Explorer collection viewer", () => {
   const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   const viewer = readFileSync(new URL("../src/components/MediaViewer.tsx", import.meta.url), "utf8");
   assert.ok(app.includes("enabled: true"), "external input must not wait for full catalog summaries");
-  assert.ok(app.includes("externalMediaBatch ? null : content()"), "the covered page must unmount its own viewer");
-  assert.ok(app.includes("preserveItemOrder"), "the external viewer must request cross-format ordering");
+  assert.ok(!app.includes("externalMediaBatch ? null : content()"), "the parent folder stays mounted behind its viewer");
+  assert.ok(app.includes("openRequest={externalTarget ?"), "external files open through their folder collection");
   assert.ok(app.includes("aiAnalysisPanelRequest && !externalMediaBatch"), "other modal input handlers must be suspended");
   assert.ok(app.includes("backgroundUiReady && !externalMediaBatch"), "the first-run focus trap must be suspended");
   assert.ok(viewer.includes("if (preserveItemOrder) return items"));

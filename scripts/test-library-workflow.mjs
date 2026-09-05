@@ -90,7 +90,8 @@ test("folder browsing is lazy, refresh reaches disk, and viewer caches use a cat
   const viewer = read("src/components/MediaViewer.tsx");
   const capabilities = JSON.parse(read("src-tauri/capabilities/default.json"));
   assert.ok(browser.includes("browseFileSystem(path, scan)"));
-  assert.ok(browser.includes('kinds={["image", "gif", "video", "pdf", "archive"]}'));
+  assert.ok(browser.includes('const EXPLORER_MEDIA_KINDS: MediaKind[] = ["image", "gif", "video", "pdf", "archive"]'));
+  assert.ok(browser.includes("kinds={EXPLORER_MEDIA_KINDS}"), "stable filters preserve the restored scroll position");
   assert.ok(collection.includes("await syncMediaFolder(initialRootId, initialFolderPath)"));
   assert.ok(collection.includes("refreshCatalogFromDisk()"));
   assert.ok(viewer.includes("collection.revision"));

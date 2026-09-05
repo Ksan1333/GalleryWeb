@@ -11,6 +11,7 @@ const mediaViewer = readFileSync(resolve(projectRoot, "src/components/MediaViewe
 const bookViewerSettings = readFileSync(resolve(projectRoot, "src/components/BookViewerSettings.tsx"), "utf8");
 const viewerCss = readFileSync(resolve(projectRoot, "src/components/MediaViewer.css"), "utf8");
 const displaySettings = readFileSync(resolve(projectRoot, "src/components/GalleryDisplaySettings.tsx"), "utf8");
+const displayPreferences = readFileSync(resolve(projectRoot, "src/services/galleryDisplayPreferences.ts"), "utf8");
 const folderActivity = readFileSync(resolve(projectRoot, "src/services/folderActivity.ts"), "utf8");
 
 const contracts = [
@@ -28,7 +29,7 @@ const contracts = [
   [!mediaCollection.includes('from "./FolderGroupsPanel"'), "virtual folder groups are not mounted in the image browser"],
   [mediaCollection.includes('className="favorite-folders-panel"'), "image browser exposes favorite folders"],
   [mediaCollection.includes("displayPreferences.groupMode") && mediaCollection.includes('label="グループ化"') && mediaCollection.includes("galleryGroupOptions.map"), "gallery grouping is available from the toolbar and context menu"],
-  [displaySettings.includes('groupMode: "none"') && displaySettings.includes("更新日単位の見出し"), "gallery grouping is opt-in and configurable by day, month, or year"],
+  [displayPreferences.includes('groupMode: "none"') && displaySettings.includes("更新日単位の見出し"), "gallery grouping is opt-in and configurable by day, month, or year"],
   [mediaCollection.includes('navigationKey === "images" || navigationKey === "videos" || navigationKey === "books"'), "image, video, and book folders use compact media tiles"],
   [app.indexOf('id: "gallery"') < app.indexOf('id: "allFolders"') && app.indexOf('id: "allFolders"') < app.indexOf('id: "favorites"'), "all-media folder navigation sits between gallery and favorites"],
   [app.includes("<FileSystemBrowser") && folderActivity.includes('"all" | "images"'), "all-folder navigation uses the on-demand filesystem browser"],
@@ -36,7 +37,7 @@ const contracts = [
   [appCss.includes(".compact-file-gallery .root-folder-card"), "image, video, and book root folders use compact rows"],
   [mediaCollection.includes('name="folderWindows"') && appCss.includes(".folder-windows-front"), "folder browsers use an Explorer-style two-tone folder icon"],
   [mediaCollection.includes('"--gallery-visual-size"') && appCss.includes("aspect-ratio: 1"), "gallery thumbnails use a square visual frame"],
-  [mediaCollection.includes("targetCardWidth = 112") && mediaCollection.includes("rowHeight: squareSize + VIRTUAL_GAP") && appCss.includes(".compact-file-layout .virtual-media-card.is-compact-file") && appCss.includes("aspect-ratio: 1;"), "gallery tiles remain square including thumbnail and text"],
+  [mediaCollection.includes("targetCardWidth = galleryCompactCardWidths[size]") && displayPreferences.includes("medium: 112") && mediaCollection.includes("rowHeight: squareSize + VIRTUAL_GAP") && appCss.includes(".compact-file-layout .virtual-media-card.is-compact-file") && appCss.includes("aspect-ratio: 1;"), "gallery tiles honor density and remain square including thumbnail and text"],
   [mediaViewer.includes("waitForBookCacheIdle") && mediaViewer.includes("BOOK_PAGE_CACHE_LOOK_AHEAD"), "book viewer preloads a bounded page window while idle"],
   [mediaViewer.includes("<figure key={slot}>") && !mediaViewer.includes("const renderTasks: RenderTask[]"), "book paging preserves the current canvas while the next page is prepared"],
   [bookViewerSettings.includes('binding: "right"') && mediaViewer.includes('return binding === "right" ? pages.reverse() : pages'), "book spreads default to page 2 on the left and page 1 on the right"],

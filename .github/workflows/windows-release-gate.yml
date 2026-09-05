@@ -47,6 +47,22 @@ jobs:
           npm run test:themes
           npm run test:layout
           npm run test:library
+          npm run test:gallery-consistency
+          npm run test:explorer-navigation
+          npm run test:book-viewer
+          npm run test:settings
+          npm run test:thumbnail-coordinator
+          npm run test:media-visual-admission
+
+      - name: Install isolated headless browser
+        run: npx playwright install chromium
+
+      - name: Verify headless layout and large-library workflows
+        run: |
+          npm run test:filesystem-layout
+          npm run test:startup-performance
+          npm run test:external-explorer
+          npm run test:pdf-book
 
       - name: Verify Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check

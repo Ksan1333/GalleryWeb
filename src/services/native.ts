@@ -524,6 +524,7 @@ let thumbnailCacheGeneration = 0;
 export const mediaThumbnailResolvedEvent = "pixvault:media-thumbnail-resolved";
 let preferenceSnapshot: NativeResult<Record<string, unknown>> | undefined;
 let preferenceSnapshotRequest: Promise<NativeResult<Record<string, unknown>>> | undefined;
+let preferenceSnapshotGeneration = 0;
 let libraryRootsCache: { at: number; result: NativeResult<LibraryRoot[]> } | undefined;
 let libraryRootsRequest: Promise<NativeResult<LibraryRoot[]>> | undefined;
 let librarySummaryCache: { at: number; result: NativeResult<LibrarySummary> } | undefined;
@@ -698,11 +699,21 @@ function errorMessage(error: unknown): string {
   return "ネイティブ処理から不明なエラーが返されました。";
 }
 
+function invalidatePreferenceSnapshot(): void {
+  preferenceSnapshotGeneration += 1;
+  preferenceSnapshot = undefined;
+  preferenceSnapshotRequest = undefined;
+}
+
 async function loadPreferenceSnapshot(): Promise<NativeResult<Record<string, unknown>>> {
   if (preferenceSnapshot) return preferenceSnapshot;
   if (preferenceSnapshotRequest) return preferenceSnapshotRequest;
-  preferenceSnapshotRequest = call<unknown>("get_preferences", undefined, [])
+  const generation = preferenceSnapshotGeneration;
+  const request: Promise<NativeResult<Record<string, unknown>>> = call<unknown>("get_preferences", undefined, [])
     .then((result) => {
+      // A restore/write may finish while this read is in flight. Old callers
+      // must also receive the new snapshot, not only avoid caching stale data.
+      if (generation !== preferenceSnapshotGeneration) return loadPreferenceSnapshot();
       const data = Array.isArray(result.data)
         ? Object.fromEntries(
             result.data
@@ -715,15 +726,20 @@ async function loadPreferenceSnapshot(): Promise<NativeResult<Record<string, unk
       if (!normalized.error) preferenceSnapshot = normalized;
       return normalized;
     })
-    .finally(() => { preferenceSnapshotRequest = undefined; });
-  return preferenceSnapshotRequest;
+    .finally(() => {
+      if (preferenceSnapshotRequest === request) preferenceSnapshotRequest = undefined;
+    });
+  preferenceSnapshotRequest = request;
+  return request;
 }
 
 function patchPreferenceSnapshot(key: string, value: unknown) {
-  if (!preferenceSnapshot) return;
+  const previous = preferenceSnapshot;
+  invalidatePreferenceSnapshot();
+  if (!previous) return;
   preferenceSnapshot = {
-    ...preferenceSnapshot,
-    data: { ...preferenceSnapshot.data, [key]: value },
+    ...previous,
+    data: { ...previous.data, [key]: value },
   };
 }
 
@@ -1389,7 +1405,7 @@ export async function importSettingsBackup(): Promise<NativeResult<SettingsBacku
     null,
     normalizeSettingsBackupResult,
   );
-  if (result.data && !result.error) preferenceSnapshot = undefined;
+  if (result.data && !result.error) invalidatePreferenceSnapshot();
   return result;
 }
 
@@ -1703,6 +1719,15 @@ function nativeMediaQuery(query: MediaQuery): Record<string, unknown> {
     offset: query.offset ?? 0,
     kinds: nativeKinds,
   };
+}
+
+export async function getMediaItemIndex(mediaId: string, query: MediaQuery): Promise<NativeResult<number | null>> {
+  return normalizedCall(
+    "get_media_item_index",
+    { mediaId, query: nativeMediaQuery(query) },
+    null,
+    (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null,
+  );
 }
 
 export async function listMediaItems(

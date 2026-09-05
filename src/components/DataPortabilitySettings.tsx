@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   commitAndroidMigrationArchive,
   exportSettingsBackup,
+  getPreferences,
   importSettingsBackup,
   listMediaItems,
   pickAndroidMigrationArchive,
@@ -10,6 +11,8 @@ import {
   type MigrationImportResult,
   type MigrationUnresolvedMedia,
 } from "../services/native";
+import { announceThemePreferences } from "../services/theme";
+import { configureNativeNotifications } from "../services/notifications";
 import { Icon } from "./Icon";
 import { formatBytes } from "./Ui";
 
@@ -162,15 +165,25 @@ export function DataPortabilitySettings({
     setMessage(undefined);
     setBusy(true);
     const response = await importSettingsBackup();
-    setBusy(false);
     if (!response.available || response.error) {
+      setBusy(false);
       setError(response.error ?? "設定バックアップを復元できませんでした。");
       return;
     }
     if (response.data) {
+      const refreshed = await getPreferences();
+      if (refreshed.error || !refreshed.available) {
+        setBusy(false);
+        setError(`設定は復元しましたが、表示への反映に失敗しました。アプリを再起動してください。${refreshed.error ?? ""}`);
+        onDataChanged();
+        return;
+      }
+      announceThemePreferences(refreshed.data);
+      configureNativeNotifications(refreshed.data.nativeNotifications);
       setMessage(`設定 ${response.data.preferences}件を復元しました。`);
       onDataChanged();
     }
+    setBusy(false);
   }
 
   async function chooseMigrationArchive() {

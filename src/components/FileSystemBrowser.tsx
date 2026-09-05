@@ -1,15 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { addLibraryRoot, browseFileSystem, listLibraryRoots, scanLibrary, setFolderPriority, type FileSystemListing, type LibraryRoot } from "../services/native";
+import { addLibraryRoot, browseFileSystem, listLibraryRoots, scanLibrary, setFolderPriority, type FileSystemListing, type LibraryRoot, type MediaItem, type MediaKind } from "../services/native";
+import { navigateExplorer, readExplorerHistory, rememberExplorerHistory, sameExplorerPath, stepExplorer, type ExplorerRequest } from "../services/explorerNavigation";
 import { Icon } from "./Icon";
 import { MediaCollection } from "./MediaCollection";
 import "./FileSystemBrowser.css";
 
-export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityChanged }: {
+const EXPLORER_MEDIA_KINDS: MediaKind[] = ["image", "gif", "video", "pdf", "archive"];
+
+export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityChanged, navigationRequest, openRequest, onOpenRequestClose }: {
   refreshVersion: number;
   onDataChanged: () => void;
   onPriorityChanged?: () => void;
+  navigationRequest?: ExplorerRequest;
+  openRequest?: { requestId: string; item: MediaItem };
+  onOpenRequestClose?: () => void;
 }) {
-  const [path, setPath] = useState<string>();
+  const [navigation, setNavigation] = useState(() => {
+    const previous = readExplorerHistory();
+    return navigationRequest ? navigateExplorer(previous, navigationRequest.path) : previous;
+  });
+  const path = navigation.path;
   const [address, setAddress] = useState("");
   const [listing, setListing] = useState<FileSystemListing | null>(null);
   const [priorities, setPriorities] = useState<LibraryRoot[]>([]);
@@ -17,11 +27,39 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityCha
   const [priorityBusy, setPriorityBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
-  const [history, setHistory] = useState<Array<string | undefined>>([]);
+  const handledNavigation = useRef(navigationRequest?.requestId);
   const generation = useRef(0);
   const lastRefresh = useRef(refreshVersion);
   const onChanged = useRef(onDataChanged);
   onChanged.current = onDataChanged;
+
+  useEffect(() => { rememberExplorerHistory(navigation); }, [navigation]);
+  useEffect(() => {
+    if (!navigationRequest || handledNavigation.current === navigationRequest.requestId) return;
+    handledNavigation.current = navigationRequest.requestId;
+    setNavigation((current) => navigateExplorer(current, navigationRequest.path));
+  }, [navigationRequest]);
+
+  useEffect(() => {
+    const handle = (direction: "back" | "forward") => (rawEvent: Event) => {
+      const event = rawEvent as CustomEvent<{ handled?: boolean }>;
+      queueMicrotask(() => {
+        if (priorityBusy || event.defaultPrevented || event.detail?.handled || navigation[direction].length === 0) return;
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+        event.preventDefault();
+        if (event.detail) event.detail.handled = true;
+        setNavigation((current) => stepExplorer(current, direction));
+      });
+    };
+    const back = handle("back");
+    const forward = handle("forward");
+    window.addEventListener("pixvault:navigate-back", back);
+    window.addEventListener("pixvault:navigate-forward", forward);
+    return () => {
+      window.removeEventListener("pixvault:navigate-back", back);
+      window.removeEventListener("pixvault:navigate-forward", forward);
+    };
+  }, [navigation, priorityBusy]);
 
   const load = useCallback(async (scan = true) => {
     const current = ++generation.current;
@@ -65,8 +103,8 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityCha
   function navigate(next?: string) {
     if (priorityBusy) return;
     if (next === path) { void load(); return; }
-    setHistory((items) => [...items, path]);
-    setPath(next);
+    setNavigation((current) => navigateExplorer(current, next));
+    window.dispatchEvent(new Event("pixvault:history-branch"));
   }
   async function prioritize() {
     if (!listing?.path) return;
@@ -98,7 +136,8 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityCha
       <p>ドライブからすべてのフォルダーを閲覧できます。開いた場所を読み込み、優先フォルダーは配下も先に読み込みます。</p></div></header>
     <div className="filesystem-toolbar">
       <nav className="filesystem-navigation" aria-label="フォルダー移動">
-      <button type="button" className="secondary-button" disabled={!history.length || priorityBusy} onClick={() => { setPath(history[history.length - 1]); setHistory((items) => items.slice(0, -1)); }}><Icon name="arrowLeft" />戻る</button>
+      <button type="button" className="secondary-button" disabled={!navigation.back.length || priorityBusy} onClick={() => setNavigation((current) => stepExplorer(current, "back"))}><Icon name="arrowLeft" />戻る</button>
+      <button type="button" className="secondary-button" disabled={!navigation.forward.length || priorityBusy} onClick={() => setNavigation((current) => stepExplorer(current, "forward"))}><Icon name="arrowRight" />進む</button>
       <button type="button" className="secondary-button" onClick={() => navigate()} disabled={priorityBusy}><Icon name="folderWindows" />PC</button>
       <button type="button" className="secondary-button" disabled={!path || priorityBusy} onClick={() => navigate(listing?.parentPath ?? undefined)}><Icon name="arrowUp" />上へ</button>
       </nav>
@@ -118,7 +157,8 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityCha
     {loading && !listing && <p role="status">フォルダーを読み込んでいます…</p>}
     {listing && !listing.path && <div className="filesystem-drives">{listing.folders.map((folder) => <button key={folder.path} type="button" onClick={() => navigate(folder.path)}><Icon name="folderWindows" /><strong>{folder.displayName}</strong><small>{folder.path}</small></button>)}</div>}
     {listing?.rootId && <section className="filesystem-content" aria-label="フォルダーとメディア"><MediaCollection key={`${listing.rootId}:${listing.relativeFolder}`} embedded compactFileLayout advancedGallerySearch viewerIncludesAllMedia showLeadingFolderCounts={false}
-      eyebrow="FOLDER" title={listing.path ?? "フォルダー"} description="フォルダーとメディア" kinds={["image", "gif", "video", "pdf", "archive"]}
+      eyebrow="FOLDER" title={listing.path ?? "フォルダー"} description="フォルダーとメディア" kinds={EXPLORER_MEDIA_KINDS}
+      openRequest={navigationRequest && sameExplorerPath(path, navigationRequest.path) && sameExplorerPath(listing.path ?? undefined, path) ? openRequest : undefined} onOpenRequestClose={onOpenRequestClose}
       emptyTitle="このフォルダーは空です" emptyDescription="表示できるメディアや子フォルダーがありません。"
       initialRootId={listing.rootId} initialFolderPath={listing.relativeFolder} refreshVersion={revision}
       leadingFolders={listing.folders.map((folder) => ({ key: folder.path, rootId: listing.rootId!, relativeFolder: folder.path, name: folder.displayName, displayPath: folder.path, itemCount: 0, hasChildren: true }))}

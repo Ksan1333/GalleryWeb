@@ -303,6 +303,17 @@ CREATE INDEX idx_x_downloaded_media_status
     ON x_downloaded_media(status, completed_at DESC);
 "#;
 
+const SCHEMA_V9: &str = r#"
+-- File identity is deliberately separate from user metadata: it is a local,
+-- best-effort scan cache, not a portable identifier for another computer.
+CREATE TABLE media_file_identities (
+    media_id TEXT PRIMARY KEY NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+    file_identity TEXT NOT NULL
+);
+CREATE INDEX idx_media_file_identities_identity
+    ON media_file_identities(file_identity);
+"#;
+
 pub struct Database {
     connection: Mutex<Connection>,
     path: PathBuf,
@@ -588,6 +599,29 @@ fn migrate(connection: &mut Connection) -> Result<(), String> {
         transaction
             .commit()
             .map_err(|error| format!("Failed to commit X duplicate tracking migration: {error}"))?;
+        current_version = 8;
+    }
+
+    if current_version < 9 {
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("Failed to start file identity migration: {error}"))?;
+        transaction
+            .execute_batch(SCHEMA_V9)
+            .map_err(|error| format!("Failed to create file identity schema: {error}"))?;
+        transaction
+            .execute(
+                "INSERT INTO schema_migrations(version, name, applied_at)
+                 VALUES (9, 'stable local file identities', CAST(strftime('%s', 'now') AS INTEGER) * 1000)",
+                [],
+            )
+            .map_err(|error| format!("Failed to record file identity migration: {error}"))?;
+        transaction
+            .pragma_update(None, "user_version", 9_u32)
+            .map_err(|error| format!("Failed to update file identity schema version: {error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("Failed to commit file identity migration: {error}"))?;
     }
 
     Ok(())
@@ -632,6 +666,7 @@ mod tests {
             "media_visual_vectors",
             "folder_hierarchy_cache",
             "x_downloaded_media",
+            "media_file_identities",
         ] {
             assert!(names.iter().any(|name| name == expected), "{expected}");
         }

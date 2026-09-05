@@ -1,7 +1,19 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import vm from "node:vm";
+import ts from "typescript";
 
 const source = readFileSync(resolve("src/services/theme.ts"), "utf8");
+const themeModule = { exports: {} };
+const emitted = new Map();
+vm.runInNewContext(ts.transpileModule(source, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, {
+  module: themeModule, exports: themeModule.exports,
+  require: () => ({ getCurrentWindow: () => { throw new Error("No native calls in theme fixture"); } }),
+  window: {},
+  document: { documentElement: { dataset: {}, style: { setProperty: (key, value) => emitted.set(key, value) } } },
+});
 
 function namedPalette(name) {
   const block = source.match(new RegExp(`const ${name}: ThemePalette = \\{([\\s\\S]*?)\\n\\};`));
@@ -53,7 +65,8 @@ for (const preset of presets) {
     const ratio = contrast(foreground, background);
     if (ratio < minimum) failures.push(`${preset.id} ${label}: ${ratio.toFixed(2)} < ${minimum}`);
   }
-  const bestAccentText = Math.max(contrast(preset.accent, "#000000"), contrast(preset.accent, "#ffffff"));
+  themeModule.exports.applyThemeSettings({ mode: "dark", preset: preset.id, custom: preset }, false);
+  const bestAccentText = contrast(emitted.get("--accent"), emitted.get("--accent-contrast"));
   if (bestAccentText < 4.5) failures.push(`${preset.id} accent has no accessible text color`);
 }
 

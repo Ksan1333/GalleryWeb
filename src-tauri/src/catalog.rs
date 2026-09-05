@@ -38,6 +38,35 @@ struct ScanCandidate {
     mime_type: String,
     byte_size: i64,
     modified_at: i64,
+    file_identity: Option<String>,
+}
+
+struct ExistingScanMedia {
+    id: String,
+    root_id: String,
+    relative_path: String,
+    file_name: String,
+    extension: String,
+    media_kind: String,
+    mime_type: String,
+    byte_size: i64,
+    modified_at: i64,
+    is_missing: bool,
+}
+
+fn existing_scan_media(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExistingScanMedia> {
+    Ok(ExistingScanMedia {
+        id: row.get(0)?,
+        root_id: row.get(1)?,
+        relative_path: row.get(2)?,
+        file_name: row.get(3)?,
+        extension: row.get(4)?,
+        media_kind: row.get(5)?,
+        mime_type: row.get(6)?,
+        byte_size: row.get(7)?,
+        modified_at: row.get(8)?,
+        is_missing: row.get(9)?,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -418,12 +447,7 @@ pub fn list_media_items(
     );
     let (filter_sql, mut values) = build_media_filter(state, &query)?;
     sql.push_str(&filter_sql);
-    let sort_column = match query.sort_by.as_deref() {
-        Some("name") => "m.file_name COLLATE NOCASE",
-        Some("size") => "m.byte_size",
-        Some("importedAt") => "m.first_seen_at",
-        _ => "m.modified_at",
-    };
+    let sort_column = media_sort_column(&query);
     let sort_direction = if query.sort_direction.as_deref() == Some("asc") {
         "ASC"
     } else {
@@ -474,6 +498,87 @@ pub fn list_media_items(
     };
 
     materialize_media_rows(&connection, rows)
+}
+
+fn media_sort_column(query: &MediaQuery) -> &'static str {
+    match query.sort_by.as_deref() {
+        Some("name") => "m.file_name COLLATE NOCASE",
+        Some("size") => "m.byte_size",
+        Some("importedAt") => "m.first_seen_at",
+        _ => "m.modified_at",
+    }
+}
+
+/// Locate a media item inside the same ordered/filtered collection used by the
+/// gallery. Only a target row and a count cross the SQLite boundary; opening a
+/// file near the end of a 220k-item library never materializes all earlier items.
+pub fn get_media_item_index(
+    state: &AppState,
+    media_id: &str,
+    query: Option<MediaQuery>,
+) -> Result<Option<u64>, String> {
+    let query = query.unwrap_or_default();
+    let (filter_sql, mut values) = build_media_filter(state, &query)?;
+    let sort_column = media_sort_column(&query);
+    let connection = state.database.lock()?;
+    let mut target_values = values.clone();
+    target_values.push(SqlValue::Text(media_id.to_owned()));
+    let target = connection
+        .query_row(
+            &format!(
+                "SELECT {sort_column}, m.file_name, m.relative_path
+                 FROM media_items m
+                 JOIN library_roots r ON r.id = m.root_id
+                 LEFT JOIN media_metadata mm ON mm.media_id = m.id
+                 WHERE {filter_sql} AND m.id = ?"
+            ),
+            params_from_iter(target_values),
+            |row| {
+                Ok((
+                    row.get::<_, SqlValue>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Failed to locate media in its collection: {error}"))?;
+    let Some((primary_value, file_name, relative_path)) = target else {
+        return Ok(None);
+    };
+    let primary_parameter = values.len() + 1;
+    let comparison = if query.sort_direction.as_deref() == Some("asc") {
+        "<"
+    } else {
+        ">"
+    };
+    values.extend([
+        primary_value,
+        SqlValue::Text(file_name),
+        SqlValue::Text(relative_path),
+        SqlValue::Text(media_id.to_owned()),
+    ]);
+    let index: i64 = connection
+        .query_row(
+            &format!(
+                "SELECT COUNT(*)
+                 FROM media_items m
+                 JOIN library_roots r ON r.id = m.root_id
+                 LEFT JOIN media_metadata mm ON mm.media_id = m.id
+                 WHERE {filter_sql} AND (
+                    {sort_column} {comparison} ?{primary_parameter}
+                    OR ({sort_column} = ?{primary_parameter} AND
+                        (m.file_name COLLATE NOCASE, m.relative_path COLLATE NOCASE, m.id)
+                        < (?{}, ?{}, ?{})))",
+                primary_parameter + 1,
+                primary_parameter + 2,
+                primary_parameter + 3,
+            ),
+            params_from_iter(values),
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Failed to count preceding media: {error}"))?;
+    Ok(Some(nonnegative_u64(index)))
 }
 
 /// Returns every image candidate in chronological order without materializing
@@ -1757,65 +1862,53 @@ fn reconcile_candidates(
     let scan_token = now_millis();
     let mut inserted = 0_u64;
     let mut updated = 0_u64;
+    let mut seen_ids = HashSet::new();
+    let mut identity_counts = HashMap::new();
+    for identity in candidates
+        .iter()
+        .filter_map(|item| item.file_identity.as_deref())
+    {
+        *identity_counts.entry(identity).or_insert(0_usize) += 1;
+    }
+    let mut directory_entries = HashMap::new();
 
     for candidate in &candidates {
-        let existing: Option<(
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            i64,
-            i64,
-            bool,
-        )> = transaction
+        let mut existing = transaction
             .query_row(
-                "SELECT id, relative_path, file_name, extension, media_kind, mime_type,
+                "SELECT id, root_id, relative_path, file_name, extension, media_kind, mime_type,
                         byte_size, modified_at, is_missing
                  FROM media_items
                  WHERE root_id = ?1 AND relative_path = ?2",
                 params![root.id, candidate.relative_path],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        row.get(7)?,
-                        row.get(8)?,
-                    ))
-                },
+                existing_scan_media,
             )
             .optional()
             .map_err(|error| format!("Failed to reconcile scanned media: {error}"))?;
-        if let Some((
-            id,
-            relative_path,
-            file_name,
-            extension,
-            media_kind,
-            mime_type,
-            byte_size,
-            modified_at,
-            is_missing,
-        )) = existing
+        if existing.is_none()
+            && candidate
+                .file_identity
+                .as_deref()
+                .is_some_and(|identity| identity_counts.get(identity) == Some(&1))
         {
-            let changed = relative_path != candidate.relative_path
-                || file_name != candidate.file_name
-                || extension != candidate.extension
-                || media_kind != candidate.media_kind
-                || mime_type != candidate.mime_type
-                || byte_size != candidate.byte_size
-                || modified_at != candidate.modified_at
-                || is_missing;
+            existing = find_relocated_scan_media(&transaction, candidate, &mut directory_entries)?;
+        }
+        let media_id;
+        if let Some(existing) = existing {
+            let changed = existing.root_id != root.id
+                || existing.relative_path != candidate.relative_path
+                || existing.file_name != candidate.file_name
+                || existing.extension != candidate.extension
+                || existing.media_kind != candidate.media_kind
+                || existing.mime_type != candidate.mime_type
+                || existing.byte_size != candidate.byte_size
+                || existing.modified_at != candidate.modified_at
+                || existing.is_missing;
+            media_id = existing.id;
             if changed {
                 transaction
                     .execute(
                         "UPDATE media_items SET
+                            root_id = ?2,
                             relative_path = ?3,
                             file_name = ?4,
                             extension = ?5,
@@ -1826,9 +1919,9 @@ fn reconcile_candidates(
                             is_missing = 0,
                             last_seen_at = ?10,
                             updated_at = ?10
-                         WHERE id = ?1 AND root_id = ?2",
+                         WHERE id = ?1",
                         params![
-                            id,
+                            media_id,
                             root.id,
                             candidate.relative_path,
                             candidate.file_name,
@@ -1844,6 +1937,7 @@ fn reconcile_candidates(
                 updated += 1;
             }
         } else {
+            media_id = Uuid::new_v4().to_string();
             transaction
                 .execute(
                     "INSERT INTO media_items(
@@ -1852,7 +1946,7 @@ fn reconcile_candidates(
                         first_seen_at, last_seen_at, updated_at
                      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0, ?10, ?10, ?10)",
                     params![
-                        Uuid::new_v4().to_string(),
+                        media_id,
                         root.id,
                         candidate.relative_path,
                         candidate.file_name,
@@ -1867,17 +1961,40 @@ fn reconcile_candidates(
                 .map_err(|error| format!("Failed to insert scanned media: {error}"))?;
             inserted += 1;
         }
+        seen_ids.insert(media_id.clone());
+        if let Some(identity) = &candidate.file_identity {
+            transaction
+                .prepare_cached(
+                    "INSERT INTO media_file_identities(media_id, file_identity) VALUES (?1, ?2)
+                     ON CONFLICT(media_id) DO UPDATE SET file_identity = excluded.file_identity
+                     WHERE file_identity <> excluded.file_identity",
+                )
+                .and_then(|mut statement| statement.execute(params![media_id, identity]))
+                .map_err(|error| format!("Failed to remember scanned file identity: {error}"))?;
+        } else {
+            // Never keep an identity from the previous file after a replacement
+            // when the current filesystem cannot provide a trustworthy identity.
+            transaction
+                .prepare_cached("DELETE FROM media_file_identities WHERE media_id = ?1")
+                .and_then(|mut statement| statement.execute([&media_id]))
+                .map_err(|error| format!("Failed to clear unavailable file identity: {error}"))?;
+        }
     }
 
+    let mut newly_missing = 0_i64;
     for id in &missing_ids {
-        transaction
+        if seen_ids.contains(id) {
+            continue;
+        }
+        newly_missing += transaction
             .execute(
                 "UPDATE media_items
                  SET is_missing = 1, updated_at = ?2
-                 WHERE id = ?1 AND is_missing = 0",
-                params![id, scan_token],
+                 WHERE id = ?1 AND root_id = ?3 AND is_missing = 0",
+                params![id, scan_token, root.id],
             )
-            .map_err(|error| format!("Failed to mark missing media: {error}"))?;
+            .map_err(|error| format!("Failed to mark missing media: {error}"))?
+            as i64;
     }
     let missing: i64 = if count_missing_total {
         transaction
@@ -1888,7 +2005,7 @@ fn reconcile_candidates(
             )
             .map_err(|error| format!("Failed to count missing media: {error}"))?
     } else {
-        missing_ids.len() as i64
+        newly_missing
     };
     transaction
         .commit()
@@ -1903,6 +2020,57 @@ fn reconcile_candidates(
         missing: nonnegative_u64(missing),
         issues,
     })
+}
+
+/// Reuse a catalog ID only when the filesystem proves that this is the same
+/// file and the sole old catalog location has really disappeared. In particular,
+/// copies, hard links, overlapping roots and disconnected volumes must not take
+/// another record's favorites, tags or bookmarks.
+fn find_relocated_scan_media(
+    connection: &Connection,
+    candidate: &ScanCandidate,
+    directory_entries: &mut HashMap<PathBuf, Option<HashSet<String>>>,
+) -> Result<Option<ExistingScanMedia>, String> {
+    let Some(identity) = candidate.file_identity.as_deref() else {
+        return Ok(None);
+    };
+    let matches = connection
+        .prepare_cached(
+            "SELECT m.id, m.root_id, m.relative_path, m.file_name, m.extension,
+                    m.media_kind, m.mime_type, m.byte_size, m.modified_at, m.is_missing,
+                    r.path, r.enabled
+             FROM media_file_identities f
+             JOIN media_items m ON m.id = f.media_id
+             JOIN library_roots r ON r.id = m.root_id
+             WHERE f.file_identity = ?1 LIMIT 2",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_map([identity], |row| {
+                    Ok((
+                        existing_scan_media(row)?,
+                        row.get::<_, String>(10)?,
+                        row.get::<_, bool>(11)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| format!("Failed to find moved file identity: {error}"))?;
+    if matches.len() != 1 {
+        return Ok(None);
+    }
+    let (existing, root_path, enabled) = matches.into_iter().next().unwrap();
+    if !enabled
+        || existing.media_kind != candidate.media_kind
+        || !confirmed_missing_cached(
+            Path::new(&root_path),
+            &Path::new(&root_path).join(&existing.relative_path),
+            directory_entries,
+        )
+    {
+        return Ok(None);
+    }
+    Ok(Some(existing))
 }
 
 /// Confirm absence against a readable ancestor, preserving disconnected
@@ -2094,7 +2262,78 @@ fn scan_candidate(
         byte_size: i64::try_from(metadata.len())
             .map_err(|_| "File is too large for the catalog".to_owned())?,
         modified_at: metadata_modified_millis(&metadata),
+        file_identity: local_file_identity(&canonical, &metadata),
     })
+}
+
+/// Metadata-only local identity: no content hashing during a large scan. The
+/// creation timestamp guards against a filesystem reusing a deleted file ID.
+/// Unsupported filesystems simply retain the conservative path-based behavior.
+#[cfg(windows)]
+fn local_file_identity(path: &Path, _metadata: &Metadata) -> Option<String> {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdInfo, GetFileInformationByHandle,
+        GetFileInformationByHandleEx,
+    };
+
+    let file = std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .open(path)
+        .ok()?;
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // The handle is owned by `file` for this call and `info` is valid writable
+    // storage. No mutation or exclusive access to the media file is requested.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return None;
+    }
+    let mut identity_info: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    // Use the full 128-bit identity (also valid on ReFS). Do not fall back to
+    // truncated legacy IDs on a filesystem that cannot supply this information.
+    if unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut identity_info as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    } == 0
+    {
+        return None;
+    }
+    let file_index = u128::from_le_bytes(identity_info.FileId.Identifier);
+    let created = (u64::from(info.ftCreationTime.dwHighDateTime) << 32)
+        | u64::from(info.ftCreationTime.dwLowDateTime);
+    if file_index == 0 || created == 0 {
+        return None;
+    }
+    Some(format!(
+        "win:{}:{file_index}:{created}",
+        identity_info.VolumeSerialNumber
+    ))
+}
+
+#[cfg(unix)]
+fn local_file_identity(_path: &Path, metadata: &Metadata) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let created = metadata
+        .created()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(format!(
+        "unix:{}:{}:{created}",
+        metadata.dev(),
+        metadata.ino()
+    ))
+}
+
+#[cfg(not(any(windows, unix)))]
+fn local_file_identity(_path: &Path, _metadata: &Metadata) -> Option<String> {
+    None
 }
 
 fn get_root_records(
@@ -2683,6 +2922,93 @@ mod tests {
     }
 
     #[test]
+    fn media_item_index_matches_every_sort_direction_and_tie_breaker() {
+        let state = priority_gallery_fixture();
+        {
+            let connection = state.database.lock().unwrap();
+            for (id, root, path, name) in [
+                ("tie-z", "parent", "A/shared.jpg", "shared.jpg"),
+                ("tie-a", "child", "a/Shared.JPG", "Shared.JPG"),
+                ("tie-b", "parent", "B/shared.jpg", "shared.jpg"),
+            ] {
+                connection.execute(
+                    "INSERT INTO media_items(id, root_id, relative_path, file_name, extension,
+                        media_kind, mime_type, byte_size, modified_at, first_seen_at, last_seen_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, 'jpg', 'image', 'image/jpeg', 1, 1700000000000, 1, 1, 1)",
+                    params![id, root, path, name],
+                ).unwrap();
+            }
+        }
+        for sort in ["name", "size", "importedAt", "modifiedAt", "unknown"] {
+            for direction in ["asc", "desc"] {
+                let query = MediaQuery {
+                    sort_by: Some(sort.to_owned()),
+                    sort_direction: Some(direction.to_owned()),
+                    ..MediaQuery::default()
+                };
+                let expected = list_media_items(&state, Some(query.clone())).unwrap();
+                for (index, item) in expected.iter().enumerate() {
+                    let actual = get_media_item_index(
+                        &state,
+                        &item.id,
+                        Some(MediaQuery {
+                            // Locating the item must ignore gallery page bounds.
+                            limit: Some(1),
+                            offset: Some(99),
+                            ..query.clone()
+                        }),
+                    )
+                    .unwrap();
+                    assert_eq!(actual, Some(index as u64), "{sort} {direction} {}", item.id);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn media_item_index_respects_the_entire_collection_filter() {
+        let state = priority_gallery_fixture();
+        set_favorite(&state, "parent-one", true).unwrap();
+        for query in [
+            priority_gallery_query(),
+            MediaQuery {
+                favorite_only: true,
+                ..MediaQuery::default()
+            },
+            MediaQuery {
+                root_id: Some("parent".to_owned()),
+                folder_path: Some(String::new()),
+                ..MediaQuery::default()
+            },
+            MediaQuery {
+                kinds: vec!["image".to_owned(), "gif".to_owned()],
+                search: Some(".jpg".to_owned()),
+                ..priority_gallery_query()
+            },
+        ] {
+            let expected = list_media_items(&state, Some(query.clone())).unwrap();
+            for item in list_media_items(&state, None).unwrap() {
+                let index = expected
+                    .iter()
+                    .position(|candidate| candidate.id == item.id)
+                    .map(|index| index as u64);
+                assert_eq!(
+                    get_media_item_index(&state, &item.id, Some(query.clone())).unwrap(),
+                    index
+                );
+            }
+            assert_eq!(
+                get_media_item_index(&state, "disabled-one", Some(query.clone())).unwrap(),
+                None
+            );
+            assert_eq!(
+                get_media_item_index(&state, "unknown", Some(query)).unwrap(),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn priority_filter_is_opt_in_and_includes_descendants_but_not_similar_prefixes() {
         let state = priority_gallery_fixture();
         let ordinary = list_media_items(&state, None).unwrap();
@@ -2940,6 +3266,207 @@ mod tests {
         let items = list_media_items(&state, None).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].file_name, "renamed.jpg");
+        assert_eq!(items[0].id, original.id);
+        assert!(items[0].is_favorite);
+    }
+
+    #[test]
+    fn full_rescan_preserves_renamed_book_tags_favorite_and_bookmark() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("book.zip");
+        fs::write(&source, b"book fixture").unwrap();
+        let state = initialized_state();
+        let root = add_library_root(&state, directory.path().to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        let original = list_media_items(&state, None).unwrap().remove(0);
+        set_favorite(&state, &original.id, true).unwrap();
+        let tag = upsert_tag(
+            &state,
+            TagInput {
+                id: None,
+                name: "Keep on rename".to_owned(),
+                color: None,
+            },
+        )
+        .unwrap();
+        set_media_tags(&state, &original.id, vec![tag.id.clone()]).unwrap();
+        set_book_bookmark(&state, &original.id, 17, true).unwrap();
+        fs::rename(&source, directory.path().join("renamed.cbz")).unwrap();
+        let report = scan_library(&state, Some(&root.id)).unwrap();
+        assert_eq!((report.inserted, report.updated, report.missing), (0, 1, 0));
+        let renamed = list_media_items(&state, None).unwrap().remove(0);
+        assert_eq!(renamed.id, original.id);
+        assert_eq!(renamed.file_name, "renamed.cbz");
+        assert!(renamed.is_favorite);
+        assert!(renamed.tags.iter().any(|item| item.id == tag.id));
+        assert_eq!(
+            list_book_bookmarks(&state, &renamed.id).unwrap()[0].page_index,
+            17
+        );
+    }
+
+    #[test]
+    fn separate_folder_rename_events_recover_already_missing_identity() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("before");
+        let target = directory.path().join("after");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("book.zip"), b"book").unwrap();
+        let state = initialized_state();
+        let root = add_library_root(&state, directory.path().to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        let original = list_media_items(&state, None).unwrap().remove(0);
+        set_book_bookmark(&state, &original.id, 3, true).unwrap();
+        fs::rename(&source, &target).unwrap();
+        reconcile_changed_paths(&state, &root.id, &[source]).unwrap();
+        assert!(list_media_items(&state, None).unwrap().is_empty());
+        reconcile_changed_paths(&state, &root.id, &[target]).unwrap();
+        let moved = list_media_items(&state, None).unwrap().remove(0);
+        assert_eq!(moved.id, original.id);
+        assert_eq!(moved.relative_path, "after/book.zip");
+        assert_eq!(
+            list_book_bookmarks(&state, &moved.id).unwrap()[0].page_index,
+            3
+        );
+    }
+
+    #[test]
+    fn same_volume_move_between_accessible_roots_preserves_media_id() {
+        let directory = tempdir().unwrap();
+        let source_root = directory.path().join("source");
+        let target_root = directory.path().join("target");
+        fs::create_dir(&source_root).unwrap();
+        fs::create_dir(&target_root).unwrap();
+        let source = source_root.join("photo.jpg");
+        let target = target_root.join("photo.jpg");
+        fs::write(&source, b"photo").unwrap();
+        let state = initialized_state();
+        let first_root = add_library_root(&state, source_root.to_str().unwrap()).unwrap();
+        let second_root = add_library_root(&state, target_root.to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&first_root.id)).unwrap();
+        let original = list_media_items(&state, None).unwrap().remove(0);
+        set_favorite(&state, &original.id, true).unwrap();
+        fs::rename(&source, &target).unwrap();
+        // The destination may arrive before the removal event.
+        reconcile_changed_paths(&state, &second_root.id, &[target]).unwrap();
+        reconcile_changed_paths(&state, &first_root.id, &[source]).unwrap();
+        let moved = list_media_items(&state, None).unwrap().remove(0);
+        assert_eq!(moved.id, original.id);
+        assert_eq!(moved.root_id, second_root.id);
+        assert!(moved.is_favorite);
+    }
+
+    #[test]
+    fn equal_content_copy_and_live_hard_link_do_not_steal_metadata() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("original.jpg");
+        fs::write(&source, b"same-size content").unwrap();
+        let state = initialized_state();
+        let root = add_library_root(&state, directory.path().to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        let original = list_media_items(&state, None).unwrap().remove(0);
+        set_favorite(&state, &original.id, true).unwrap();
+        fs::copy(&source, directory.path().join("copy.jpg")).unwrap();
+        fs::hard_link(&source, directory.path().join("hardlink.jpg")).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        let items = list_media_items(&state, None).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items.iter().filter(|item| item.is_favorite).count(), 1);
+        assert!(
+            items
+                .iter()
+                .find(|item| item.id == original.id)
+                .unwrap()
+                .is_favorite
+        );
+        fs::remove_file(&source).unwrap();
+        let replacement = directory.path().join("different.jpg");
+        fs::rename(directory.path().join("copy.jpg"), &replacement).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        assert!(
+            !list_media_items(&state, None)
+                .unwrap()
+                .iter()
+                .any(|item| item.is_favorite)
+        );
+    }
+
+    #[test]
+    fn unavailable_old_root_does_not_transfer_metadata_to_another_root() {
+        let directory = tempdir().unwrap();
+        let source_root = directory.path().join("volume");
+        let offline_root = directory.path().join("offline");
+        fs::create_dir(&source_root).unwrap();
+        fs::write(source_root.join("book.zip"), b"book").unwrap();
+        let state = initialized_state();
+        let first_root = add_library_root(&state, source_root.to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&first_root.id)).unwrap();
+        let original = list_media_items(&state, None).unwrap().remove(0);
+        set_favorite(&state, &original.id, true).unwrap();
+        fs::rename(&source_root, &offline_root).unwrap();
+        let second_root = add_library_root(&state, offline_root.to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&second_root.id)).unwrap();
+        let items = list_media_items(&state, None).unwrap();
+        let new_item = items
+            .iter()
+            .find(|item| item.root_id == second_root.id)
+            .unwrap();
+        assert_ne!(new_item.id, original.id);
+        assert!(!new_item.is_favorite);
+        assert!(
+            items
+                .iter()
+                .find(|item| item.id == original.id)
+                .unwrap()
+                .is_favorite
+        );
+    }
+
+    #[test]
+    fn replacement_at_same_path_refreshes_identity_before_later_rename() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("photo.jpg");
+        let previous = directory.path().join("previous.tmp");
+        fs::write(&source, b"old content").unwrap();
+        let state = initialized_state();
+        let root = add_library_root(&state, directory.path().to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        let original = list_media_items(&state, None).unwrap().remove(0);
+        set_favorite(&state, &original.id, true).unwrap();
+        let read_identity = || {
+            state
+                .database
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT file_identity FROM media_file_identities WHERE media_id = ?1",
+                    [&original.id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap()
+        };
+        let first_identity = read_identity();
+        fs::rename(&source, &previous).unwrap();
+        fs::write(&source, b"replacement").unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        assert_ne!(read_identity(), first_identity);
+        fs::rename(&source, directory.path().join("replacement.jpg")).unwrap();
+        fs::rename(&previous, directory.path().join("old.jpg")).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        let items = list_media_items(&state, None).unwrap();
+        let replacement = items
+            .iter()
+            .find(|item| item.file_name == "replacement.jpg")
+            .unwrap();
+        assert_eq!(replacement.id, original.id);
+        assert!(replacement.is_favorite);
+        assert!(
+            !items
+                .iter()
+                .find(|item| item.file_name == "old.jpg")
+                .unwrap()
+                .is_favorite
+        );
     }
 
     #[test]

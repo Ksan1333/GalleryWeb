@@ -16,6 +16,7 @@ import { SelectMenu } from "./components/Ui";
 import { useAiOperationBridge } from "./hooks/useAiOperationBridge";
 import { useThumbnailCacheOperationBridge } from "./hooks/useThumbnailCacheOperationBridge";
 import { useExternalMediaOpen } from "./hooks/useExternalMediaOpen";
+import { externalExplorerTarget, joinFolderPath, type ExplorerRequest } from "./services/explorerNavigation";
 import {
   addLibraryRoot,
   emptyLibrarySummary,
@@ -74,6 +75,8 @@ const GalleryMediaSettings = lazy(() => import("./components/GalleryMediaSetting
 const GalleryDisplaySettings = lazy(() => import("./components/GalleryDisplaySettings").then((module) => ({ default: module.GalleryDisplaySettings })));
 const XDownloadDirectorySetting = lazy(() => import("./components/XDownloadDirectorySetting").then((module) => ({ default: module.XDownloadDirectorySetting })));
 const DataPortabilitySettings = lazy(() => import("./components/DataPortabilitySettings").then((module) => ({ default: module.DataPortabilitySettings })));
+const GeneralSettings = lazy(() => import("./components/GeneralSettings").then((module) => ({ default: module.GeneralSettings })));
+const DiagnosticSettings = lazy(() => import("./components/DiagnosticSettings").then((module) => ({ default: module.DiagnosticSettings })));
 const SearchAndGroupingSettings = lazy(() => import("./components/SearchAndGroupingSettings").then((module) => ({ default: module.SearchAndGroupingSettings })));
 const ViewerControlSettings = lazy(() => import("./components/ViewerControlSettings").then((module) => ({ default: module.ViewerControlSettings })));
 
@@ -132,7 +135,7 @@ const navigation = navigationGroups.flatMap((group) => group.items);
 
 const sectionDetails: Record<Section, { eyebrow: string; description: string }> = {
   home: { eyebrow: "LIBRARY DESK", description: "今日のライブラリをひと目で確認" },
-  gallery: { eyebrow: "ALL MEDIA", description: "すべてのメディアを横断して探す" },
+  gallery: { eyebrow: "GALLERY", description: "優先フォルダーのメディアを探す" },
   allFolders: { eyebrow: "MEDIA FOLDERS", description: "すべての形式をフォルダー単位で移動" },
   folders: { eyebrow: "IMAGES", description: "画像とGIFをフォルダー単位で整理" },
   videos: { eyebrow: "VIDEOS", description: "動画をフォルダー単位で整理" },
@@ -198,6 +201,8 @@ function App() {
   const [catalogRefreshVersion, setCatalogRefreshVersion] = useState(0);
   const [externalXUrl, setExternalXUrl] = useState<string>();
   const [externalMediaBatch, setExternalMediaBatch] = useState<ExternalMediaOpenBatch>();
+  const [explorerNavigationRequest, setExplorerNavigationRequest] = useState<ExplorerRequest>();
+  const externalTarget = useMemo(() => externalMediaBatch ? externalExplorerTarget(externalMediaBatch) : undefined, [externalMediaBatch]);
   const [backgroundUiReady, setBackgroundUiReady] = useState(false);
   const [tutorialReopenRequestId, setTutorialReopenRequestId] = useState(0);
 
@@ -302,6 +307,10 @@ function App() {
 
   const navigateToSection = useCallback((nextSection: Section) => {
     setMobileNavigationOpen(false);
+    if (nextSection !== "allFolders") {
+      setExternalMediaBatch(undefined);
+      setExplorerNavigationRequest(undefined);
+    }
     const currentSection = sectionRef.current;
     if (currentSection === nextSection) return;
     sectionBackStack.current.push(currentSection);
@@ -352,6 +361,7 @@ function App() {
   }, []);
 
   const navigateForward = useCallback(() => {
+    if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
     const detail = { handled: false };
     const request = new CustomEvent("pixvault:navigate-forward", {
       cancelable: true,
@@ -457,9 +467,16 @@ function App() {
   }, [publishCatalogChange, refreshSummary]);
 
   const handleExternalMediaOpen = useCallback((batch: ExternalMediaOpenBatch) => {
+    const target = externalExplorerTarget(batch);
+    if (!target) {
+      setError("ファイルの親フォルダーを確認できませんでした。");
+      return;
+    }
+    setExplorerNavigationRequest(target.request);
     setExternalMediaBatch(batch);
+    navigateToSection("allFolders");
     publishCatalogChange();
-  }, [publishCatalogChange]);
+  }, [navigateToSection, publishCatalogChange]);
 
   const handleExternalMediaError = useCallback((message: string) => {
     setError(message);
@@ -612,16 +629,25 @@ function App() {
   }, [section, catalogRefreshVersion, summary.favorites]);
 
   const openHomeFolder = useCallback((folder: FolderActivityRecord) => {
+    if (folder.navigationKey === "all") {
+      const root = roots.find((entry) => entry.id === folder.rootId);
+      if (!root) {
+        setError("フォルダーの場所を確認できません。接続状態を確認して更新してください。");
+        return;
+      }
+      setExternalMediaBatch(undefined);
+      setExplorerNavigationRequest({ requestId: crypto.randomUUID(), path: joinFolderPath(root.path, folder.relativePath) });
+      navigateToSection("allFolders");
+      return;
+    }
     rememberFolderNavigation(folder.navigationKey, {
       rootId: folder.rootId,
       path: folder.relativePath,
     });
     navigateToSection(folder.navigationKey === "images"
       ? "folders"
-      : folder.navigationKey === "all"
-        ? "allFolders"
-        : folder.navigationKey);
-  }, [navigateToSection]);
+      : folder.navigationKey);
+  }, [navigateToSection, roots]);
 
   const removeHomeFolderFavorite = useCallback((folder: FolderActivityRecord) => {
     void setFolderFavorite({
@@ -802,7 +828,7 @@ function App() {
             <header><span><p className="kicker">LIBRARY PULSE</p><h2>ライブラリ</h2></span><Icon name="database" /></header>
             <div className="pulse-total"><strong>{summary.totalItems.toLocaleString("ja-JP")}</strong><span>件のメディア</span></div>
             <div className="pulse-list">
-              <button type="button" onClick={() => navigateToSection("gallery")}><span><i className="pulse-dot image" />画像・GIF</span><strong>{(summary.images + summary.gifs).toLocaleString("ja-JP")}</strong></button>
+              <button type="button" onClick={() => navigateToSection("folders")}><span><i className="pulse-dot image" />画像・GIF</span><strong>{(summary.images + summary.gifs).toLocaleString("ja-JP")}</strong></button>
               <button type="button" onClick={() => navigateToSection("videos")}><span><i className="pulse-dot video" />動画</span><strong>{summary.videos.toLocaleString("ja-JP")}</strong></button>
               <button type="button" onClick={() => navigateToSection("books")}><span><i className="pulse-dot book" />ブック</span><strong>{summary.books.toLocaleString("ja-JP")}</strong></button>
               <button type="button" onClick={() => navigateToSection("favorites")}><span><i className="pulse-dot favorite" />お気に入り</span><strong>{summary.favorites.toLocaleString("ja-JP")}</strong></button>
@@ -812,9 +838,9 @@ function App() {
         </div>
 
         <section className="quick-access-section" aria-labelledby="quick-access-title">
-          <div className="section-heading"><div><p className="kicker">JUMP BACK IN</p><h2 id="quick-access-title">すぐに開く</h2></div><span className="section-note">ライブラリ全体を形式別に表示</span></div>
+          <div className="section-heading"><div><p className="kicker">JUMP BACK IN</p><h2 id="quick-access-title">すぐに開く</h2></div><span className="section-note">優先フォルダー・メディア別の一覧</span></div>
           <div className="quick-access-grid">
-            <button type="button" data-tone="violet" onClick={() => navigateToSection("gallery")}><span><Icon name="gallery" /></span><div><small>ALL MEDIA</small><strong>ギャラリー</strong><em>{summary.totalItems.toLocaleString("ja-JP")} 件</em></div><Icon name="arrowRight" /></button>
+            <button type="button" data-tone="violet" onClick={() => navigateToSection("gallery")}><span><Icon name="gallery" /></span><div><small>GALLERY</small><strong>ギャラリー</strong><em>優先フォルダーのみ</em></div><Icon name="arrowRight" /></button>
             <button type="button" data-tone="blue" onClick={() => navigateToSection("folders")}><span><Icon name="image" /></span><div><small>IMAGES</small><strong>画像</strong><em>{(summary.images + summary.gifs).toLocaleString("ja-JP")} 件</em></div><Icon name="arrowRight" /></button>
             <button type="button" data-tone="rose" onClick={() => navigateToSection("videos")}><span><Icon name="video" /></span><div><small>VIDEOS</small><strong>動画</strong><em>{summary.videos.toLocaleString("ja-JP")} 件</em></div><Icon name="arrowRight" /></button>
             <button type="button" data-tone="amber" onClick={() => navigateToSection("books")}><span><Icon name="book" /></span><div><small>BOOKS</small><strong>ブック</strong><em>{summary.books.toLocaleString("ja-JP")} 件</em></div><Icon name="arrowRight" /></button>
@@ -854,10 +880,10 @@ function App() {
               void refreshSummary();
             }}
             onRemove={(mediaId) => {
-              setHomeSelectedMediaId(undefined);
               setHomeFavoriteMedia((current) => current.filter((item) => item.id !== mediaId));
               void refreshSummary();
             }}
+            onCurrentIdChange={(mediaId) => setHomeSelectedMediaId(mediaId)}
           />
         )}
       </div>
@@ -869,6 +895,8 @@ function App() {
     return (
       <div className="dashboard functional-dashboard">
         {error && <div className="operation-message error"><Icon name="warning" />{error}</div>}
+        <GeneralSettings nativeAvailable={nativeAvailable} />
+        <DiagnosticSettings nativeAvailable={nativeAvailable} />
         <section className="settings-panel">
           <div className="section-heading"><div><p className="kicker">LIBRARY SETTINGS</p><h2>優先読み込みフォルダー</h2></div><button className="primary-button" type="button" onClick={() => void addFolder()} disabled={busy || !nativeAvailable}><Icon name="folderPlus" />追加</button></div>
           {priorityRoots.length === 0 ? <div className="empty-panel"><Icon name="folderWindows" /><p>優先フォルダーは配下を先に読み込みます。通常の閲覧は全フォルダーから利用できます。</p></div> : <div className="root-list settings-root-list">{priorityRoots.map((root) => <article key={root.id}><Icon name="folderWindows" /><div><strong>{root.displayName}</strong><span>{root.path}</span><small>{root.mediaCount} 件のメディア</small></div><button type="button" onClick={() => void scan(root.id)} disabled={busy}>再スキャン</button><button className="danger-button" type="button" onClick={() => void removeRoot(root)} disabled={busy}>優先指定を解除</button></article>)}</div>}
@@ -1011,7 +1039,10 @@ function App() {
   function content() {
     if (section === "home") return home();
     if (section === "gallery") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="GALLERY" title="ギャラリー" description="優先フォルダー配下のメディアだけを表示します。動画・ブックの表示は設定で変更できます。" kinds={galleryMediaKinds} priorityOnly compactFileLayout advancedGallerySearch viewerIncludesAllMedia tagNavigation={tagGalleryNavigation} emptyTitle="優先フォルダーのメディアはまだありません" emptyDescription="全フォルダーで優先読み込みに追加するか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
-    if (section === "allFolders") return <FileSystemBrowser refreshVersion={catalogRefreshVersion} onDataChanged={refreshSummary} onPriorityChanged={refreshPriorityScope} />;
+    if (section === "allFolders") return <FileSystemBrowser refreshVersion={catalogRefreshVersion} onDataChanged={refreshSummary} onPriorityChanged={refreshPriorityScope}
+      navigationRequest={explorerNavigationRequest}
+      openRequest={externalTarget ? { requestId: externalTarget.request.requestId, item: externalTarget.item } : undefined}
+      onOpenRequestClose={() => { setExternalMediaBatch(undefined); setExplorerNavigationRequest(undefined); void refreshSummary(); }} />;
     if (section === "folders") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="images" eyebrow="IMAGES" title="画像" description="画像とGIFだけを、元のフォルダー構成ごとに表示します。" kinds={IMAGE_MEDIA_KINDS} emptyTitle="画像フォルダーはまだありません" emptyDescription="全フォルダーから画像やGIFのある場所を開いてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "videos") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="videos" eyebrow="VIDEOS" title="動画" description="動画をフォルダー単位で整理して表示します。" kinds={VIDEO_MEDIA_KINDS} emptyTitle="動画はまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "books") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="books" eyebrow="BOOKS" title="ブック" description="PDFとZIP/CBZをフォルダー単位で整理して表示します。" kinds={BOOK_MEDIA_KINDS} emptyTitle="ブックはまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
@@ -1093,56 +1124,10 @@ function App() {
           </div>
         </header>
         <Suspense fallback={<div className="empty-panel"><span className="spinner" /><p>読み込み中…</p></div>}>
-          {externalMediaBatch ? null : content()}
+          {content()}
         </Suspense>
       </main>
       <OperationTray />
-      {externalMediaBatch && (
-        <Suspense fallback={<div className="empty-panel"><span className="spinner" /><p>ファイルを開いています…</p></div>}>
-          <MediaViewer
-            key={externalMediaBatch.requestId}
-            items={externalMediaBatch.items}
-            currentId={externalMediaBatch.currentId}
-            preserveItemOrder
-            onClose={() => {
-              setExternalMediaBatch(undefined);
-              void refreshSummary();
-            }}
-            onCurrentIdChange={(mediaId) => {
-              setExternalMediaBatch((current) => current
-                ? { ...current, currentId: mediaId }
-                : current);
-            }}
-            onItemPatch={(mediaId, patch) => {
-              setExternalMediaBatch((current) => current
-                ? {
-                    ...current,
-                    items: current.items.map((item) => item.id === mediaId
-                      ? { ...item, ...patch }
-                      : item),
-                  }
-                : current);
-              void refreshSummary();
-            }}
-            onRemove={(mediaId) => {
-              setExternalMediaBatch((current) => {
-                if (!current) return current;
-                const items = current.items.filter((item) => item.id !== mediaId);
-                if (items.length === 0) return undefined;
-                return {
-                  ...current,
-                  items,
-                  currentId: items.some((item) => item.id === current.currentId)
-                    ? current.currentId
-                    : items[0].id,
-                };
-              });
-              publishCatalogChange();
-              void refreshSummary();
-            }}
-          />
-        </Suspense>
-      )}
       {aiAnalysisPanelRequest && !externalMediaBatch && (
         <Suspense fallback={null}>
           <AIAnalysisModal
