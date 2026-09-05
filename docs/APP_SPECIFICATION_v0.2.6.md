@@ -48,6 +48,8 @@
 
 Windowsの短い別名パスと削除後の照合は一時ディレクトリで検査する。利用者の原本・DB・画面はテスト対象にしない。起動JS320 KiB/gzip100 KiB、CSS122 KiB/gzip24 KiBの上限は維持し、総アセットは追加制御と履歴分のみ2614 KiBとする。
 
+Windows CIはPowerShell 7ホスト上で署名検査スクリプトを直接実行する。旧PowerShellを子プロセスとして起動した際のモジュール互換性問題を避け、長時間のビルドに入る前にもGet-AuthenticodeSignatureの実行を確認する。署名検査そのものを省略したり、検査エラーを未署名として握りつぶしたりはしない（2026-09-06追記）。
+
 版数入りEXEは `release/0.2.6/PixVault for Windows_0.2.6_x64-setup.exe` に保管する。テスト・ビルド・ハッシュ・CIの結果は `RELEASE_v0.2.6.md` に記録する。GUI操作禁止のため実機手操作と署名の確認が残る場合は、一般配布完了ではなく検証用Pre-releaseとして扱う。
 
 成果物・DLL・シンボルをrelease配下に保全し、使用中プロセスがないことを確認してから `cargo clean --manifest-path src-tauri/Cargo.toml` を実行する。ユーザーデータ、node_modules本体、dist、過去成果物は削除しない。清掃容量・延期対象を検証記録と作業報告に明記する。

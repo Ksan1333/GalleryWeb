@@ -34,6 +34,12 @@ jobs:
         with:
           components: rustfmt
 
+      - name: Verify Windows signing tools before the long build
+        shell: pwsh
+        run: |
+          Get-Command Get-AuthenticodeSignature -ErrorAction Stop | Out-Null
+          Get-AuthenticodeSignature -LiteralPath (Join-Path $PSHOME 'pwsh.exe') -ErrorAction Stop | Out-Null
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -85,7 +91,10 @@ jobs:
         run: npm run test:external-file-open
 
       - name: Validate release metadata and installer
-        run: npm run release:check
+        # Do not spawn Windows PowerShell 5 from the runner's PowerShell 7:
+        # inherited module paths can prevent the Security module from loading.
+        shell: pwsh
+        run: ./scripts/check-release-artifacts.ps1
 
       - name: Upload installer and manifest
         uses: actions/upload-artifact@v7
