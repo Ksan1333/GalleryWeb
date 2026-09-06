@@ -1957,6 +1957,7 @@ function VideoViewer({
   onLoadingChange,
   menusHidden,
   onMetadata,
+  seekSeconds,
 }: {
   item: MediaItem;
   source?: string;
@@ -1967,6 +1968,7 @@ function VideoViewer({
   onLoadingChange: (loading: boolean) => void;
   menusHidden: boolean;
   onMetadata: (metadata: ViewerRuntimeMetadata) => void;
+  seekSeconds: number;
 }) {
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
@@ -1984,6 +1986,9 @@ function VideoViewer({
   const previewRef = useRef<HTMLVideoElement>(null);
   const feedbackTimerRef = useRef<number | undefined>(undefined);
   const clickTimerRef = useRef<number | undefined>(undefined);
+  const surfacePointers = useRef(new Set<number>());
+  const surfacePress = useRef<{ id: number; x: number; y: number; at: number } | undefined>(undefined);
+  const surfaceTap = useRef<{ x: number; y: number; at: number; forwards: boolean } | undefined>(undefined);
   const controlsTimerRef = useRef<number | undefined>(undefined);
   const relativeScrubActiveRef = useRef(false);
   const relativeAnchorRef = useRef(0);
@@ -2008,6 +2013,9 @@ function VideoViewer({
       window.clearTimeout(clickTimerRef.current);
       clickTimerRef.current = undefined;
     }
+    surfacePress.current = undefined;
+    surfaceTap.current = undefined;
+    surfacePointers.current.clear();
     setPlaying(false);
     setPosition(0);
     setPreviewTime(0);
@@ -2262,40 +2270,66 @@ function VideoViewer({
     }
   };
 
-  const handleSurfaceClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.detail > 1) {
-      if (clickTimerRef.current !== undefined) {
-        window.clearTimeout(clickTimerRef.current);
-        clickTimerRef.current = undefined;
-      }
-      return;
-    }
-    if (clickTimerRef.current !== undefined) window.clearTimeout(clickTimerRef.current);
+  const toggleSurfacePlayback = () => {
     const willPlay = Boolean(videoRef.current?.paused);
-    clickTimerRef.current = window.setTimeout(() => {
-      clickTimerRef.current = undefined;
-      void togglePlayback().then((succeeded) => {
-        if (succeeded) showWheelFeedback(willPlay ? "play" : "pause", willPlay ? "再生" : "一時停止");
-      });
-    }, 320);
+    void togglePlayback().then((succeeded) => {
+      if (succeeded) showWheelFeedback(willPlay ? "play" : "pause", willPlay ? "再生" : "一時停止");
+    });
   };
 
-  const handleSurfaceDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
+  const cancelSurfaceTap = () => {
+    surfacePress.current = undefined;
+    surfaceTap.current = undefined;
     if (clickTimerRef.current !== undefined) {
       window.clearTimeout(clickTimerRef.current);
       clickTimerRef.current = undefined;
     }
+  };
+
+  const handleSurfacePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    surfacePointers.current.add(event.pointerId);
+    if (!event.isPrimary || surfacePointers.current.size > 1) {
+      cancelSurfaceTap();
+      return;
+    }
+    surfacePress.current = { id: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now() };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const handleSurfacePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    surfacePointers.current.delete(event.pointerId);
+    const press = surfacePress.current;
+    surfacePress.current = undefined;
+    if (!press || press.id !== event.pointerId) return;
+    const now = performance.now();
+    if (now - press.at > 450 || Math.hypot(event.clientX - press.x, event.clientY - press.y) > 14) {
+      cancelSurfaceTap();
+      return;
+    }
     const bounds = event.currentTarget.getBoundingClientRect();
     const forwards = event.clientX - bounds.left >= bounds.width / 2;
-    const seconds = forwards ? 10 : -10;
-    const next = seekBy(seconds);
-    if (next !== undefined) {
-      showWheelFeedback(
-        forwards ? "forward10" : "rewind10",
-        `${forwards ? "+" : "−"}10秒 · ${formatTime(next)}`,
+    const previous = surfaceTap.current;
+    if (previous && now - previous.at <= 450 && previous.forwards === forwards
+      && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= 48) {
+      cancelSurfaceTap();
+      const seconds = forwards ? seekSeconds : -seekSeconds;
+      const next = seekBy(seconds);
+      if (next !== undefined) showWheelFeedback(
+        forwards ? "forward10" : "rewind10", `${formatSignedSeconds(seconds)} · ${formatTime(next)}`,
       );
+      return;
     }
+    // Recognize mouse, pen and touch from their actual pointer events. Some
+    // WebViews never emit dblclick for touch; compatibility clicks are ignored.
+    if (previous) { cancelSurfaceTap(); toggleSurfacePlayback(); }
+    surfaceTap.current = { x: event.clientX, y: event.clientY, at: now, forwards };
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = undefined;
+      surfaceTap.current = undefined;
+      toggleSurfacePlayback();
+    }, 450);
   };
 
   if (!source) return <Unavailable icon="video">動画を開けません。</Unavailable>;
@@ -2308,9 +2342,24 @@ function VideoViewer({
       <div
         className="pv-video-surface"
         onWheel={handleVolumeWheel}
-        onClick={handleSurfaceClick}
-        onDoubleClick={handleSurfaceDoubleClick}
-        title="クリックで再生・停止／左右をダブルクリックで10秒移動／ホイールで音量調整"
+        role="button"
+        tabIndex={0}
+        aria-label={`動画再生面。左右をダブルタップで${seekSeconds}秒移動`}
+        onPointerDown={handleSurfacePointerDown}
+        onPointerMove={(event) => {
+          const press = surfacePress.current;
+          if (press?.id === event.pointerId && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 14) cancelSurfaceTap();
+        }}
+        onPointerUp={handleSurfacePointerUp}
+        onPointerCancel={(event) => { surfacePointers.current.delete(event.pointerId); cancelSurfaceTap(); }}
+        onClick={(event) => { if (event.detail === 0) toggleSurfacePlayback(); }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault(); event.stopPropagation();
+            if (!event.repeat) { cancelSurfaceTap(); toggleSurfacePlayback(); }
+          }
+        }}
+        title={`クリックで再生・停止／左右をダブルタップで${seekSeconds}秒移動／ホイールで音量調整`}
       >
         <video
           ref={videoRef}
@@ -4147,6 +4196,7 @@ export function MediaViewer({
           source={source}
           videoRef={videoRef}
           playbackPreferences={videoPlaybackPreferences}
+          seekSeconds={viewerControlPreferences.videoSeekSeconds}
           onPlaybackPreferencesChange={rememberVideoPlaybackPreferences}
           onError={setError}
           onLoadingChange={handleMediaLoading}

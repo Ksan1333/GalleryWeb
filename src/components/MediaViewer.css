@@ -423,6 +423,7 @@
 }
 
 .pv-media-info-panel {
+  --pv-info-muted: color-mix(in srgb, var(--muted) 75%, var(--text));
   position: relative;
   display: grid;
   min-width: 0;
@@ -430,10 +431,8 @@
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   border-left: 1px solid rgba(255, 255, 255, 0.075);
-  color: #e9dff4;
-  background:
-    radial-gradient(circle at 100% 0, rgba(157, 92, 224, 0.13), transparent 30%),
-    linear-gradient(180deg, #15101d, #100c16);
+  color: var(--text);
+  background: var(--panel);
 }
 
 .pv-media-info-panel > header {
@@ -731,7 +730,7 @@
   overflow: hidden;
   border: 1px solid rgba(205, 164, 255, .26);
   border-radius: 14px;
-  background: linear-gradient(180deg, #17111f, #100c16);
+  background: var(--panel);
   box-shadow: 0 18px 46px rgba(0, 0, 0, .5);
 }
 
@@ -1396,6 +1395,7 @@
 }
 
 .pv-video-surface {
+  touch-action: manipulation;
   position: relative;
   display: grid;
   width: 100%;
@@ -1410,6 +1410,11 @@
 .pv-video-surface > video {
   width: 100%;
   height: 100%;
+}
+
+.pv-video-surface:focus-visible {
+  outline: 2px solid #d9c5ed;
+  outline-offset: -3px;
 }
 
 .pv-video-wheel-feedback {
@@ -3158,6 +3163,102 @@
 
 @keyframes pv-viewer-spin {
   to { transform: rotate(360deg); }
+}
+
+/* Information surfaces follow the selected theme; the media canvas stays dark. */
+.pv-media-info-panel :is(h3, .pv-media-info-summary strong, .pv-media-info-list dd,
+  .pv-media-info-relative, .pv-media-info-section-title > span, .pv-media-recommendation-grid b,
+  .pv-tag-navigation strong) { color: var(--text); }
+.pv-media-info-panel :is(.pv-viewer-kicker, .pv-media-info-drag-handle, .pv-media-info-summary small,
+  .pv-media-info-list dt, .pv-media-info-root, .pv-media-recommendation-note,
+  .pv-media-recommendation-grid small, .pv-media-recommendation-empty,
+  .pv-media-recommendation-loading, .pv-media-recommendation-pending,
+  .pv-media-info-tags > em, .pv-tag-navigation small) { color: var(--pv-info-muted); }
+.pv-media-info-panel :is(.pv-media-info-summary strong, .pv-media-info-list dd,
+  .pv-media-info-path, .pv-media-info-relative, .pv-media-info-explorer) { font-size: 11px; }
+.pv-media-info-panel :is(.pv-media-info-summary small, .pv-media-info-list dt,
+  .pv-media-info-root, .pv-media-recommendation-note, .pv-media-recommendation-grid b,
+  .pv-media-recommendation-grid small, .pv-media-info-section-title > span,
+  .pv-media-info-tags > button, .pv-media-info-tags > button > strong) { font-size: 10px; }
+.pv-media-info-panel :is(.pv-media-info-sheet-toggle, .pv-media-info-section-title > button,
+  .pv-media-info-explorer, .pv-media-info-tags > button, .pv-tag-navigation > button,
+  .pv-media-recommendation-grid > button, .pv-media-info-badges > span,
+  .pv-media-info-summary > span) {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--field-bg);
+}
+.pv-media-info-panel :is(.pv-media-info-sheet-toggle, .pv-media-info-section-title > button,
+  .pv-media-info-explorer, .pv-media-info-tags > button, .pv-tag-navigation > button,
+  .pv-media-recommendation-grid > button):is(:hover, [aria-expanded="true"]) {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  filter: none;
+}
+.pv-media-info-panel button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+.pv-media-info-panel .pv-media-info-tags > button > strong { color: var(--text); }
+.pv-media-info-panel .pv-media-info-tags > button.is-ai-confidence {
+  background: linear-gradient(to left,
+    color-mix(in srgb, var(--success) 16%, var(--field-bg)) 0 var(--pv-tag-confidence),
+    var(--field-bg) var(--pv-tag-confidence) 100%);
+}
+.pv-media-info-panel .pv-media-recommendation-grid > button.is-similarity {
+  background: linear-gradient(135deg,
+    hsla(var(--pv-similarity-hue), 65%, 50%, var(--pv-similarity-alpha)), transparent 72%), var(--field-bg);
+}
+.pv-media-info-panel .pv-media-info-badges > span.rating-r18 { background: color-mix(in srgb, var(--danger) 10%, var(--field-bg)); }
+.pv-media-info-panel .pv-media-info-badges > span.rating-r15 { background: color-mix(in srgb, #c98b16 12%, var(--field-bg)); }
+.pv-media-info-panel :is(.pv-media-info-path, .pv-tag-navigation) {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--field-bg);
+}
+.pv-media-info-panel :is(header, .pv-media-info-section, .pv-media-info-list > div) { border-color: var(--border); }
+.pv-media-info-panel:is(.is-sidebar, .is-bottom-sheet) { border-color: var(--border); }
+.pv-media-info-panel.is-collapsed.is-dragging { background: var(--panel); }
+
+[data-theme="light"] :is(.pv-viewer-shell, .pv-viewer-header, .pv-viewer-footer,
+  .pv-viewer-rail, .pv-book-controls, .pv-viewer-submodal > section) {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--panel);
+}
+[data-theme="light"] :is(.pv-viewer-title h2, .pv-viewer-submodal h3,
+  .pv-viewer-rail-name, .pv-viewer-action, .pv-book-controls > span,
+  .pv-viewer-tag-summary strong) { color: var(--text); }
+[data-theme="light"] :is(.pv-viewer-title p, .pv-viewer-rail-count,
+  .pv-viewer-rail-toggle, .pv-viewer-tag-summary span, .pv-rating-switch button) {
+  color: color-mix(in srgb, var(--muted) 75%, var(--text));
+}
+[data-theme="light"] .pv-viewer-shell {
+  --pv-rating-accent: var(--accent-strong);
+  --pv-rating-accent-soft: var(--accent-soft);
+  --pv-rating-accent-border: var(--border);
+}
+[data-theme="light"] :is(.pv-viewer-header, .pv-viewer-footer, .pv-book-controls,
+  .pv-viewer-submodal) :is(button, input) {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--field-bg);
+}
+[data-theme="light"] :is(.pv-viewer-header, .pv-viewer-footer, .pv-book-controls,
+  .pv-viewer-submodal) button:is(:hover, .is-active, .is-selected) {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+[data-theme="light"] .pv-viewer-rail-track > button {
+  border-color: var(--border);
+  background: var(--field-bg);
+}
+[data-theme="light"] .pv-viewer-rail-track > button.is-current { border-color: var(--accent-strong); }
+[data-theme="light"] .pv-viewer-submodal :is(.pv-viewer-primary, .pv-tag-create > button) {
+  color: var(--accent-contrast);
+  background: var(--accent);
 }
 
 @keyframes pv-vector-pulse {
