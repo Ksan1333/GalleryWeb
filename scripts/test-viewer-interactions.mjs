@@ -130,6 +130,9 @@ try {
   await page.locator('[data-media-id="video-0"]').click();
   await page.locator('.pv-video-surface > video').waitFor();
   await page.locator('.pv-media-info-list dd').first().waitFor();
+  await page.waitForFunction(() => !document.querySelector('.pv-viewer-page-loading'));
+  assert.equal(await page.locator('.pv-viewer-page-loading').count(), 0,
+    'a playing video must not keep the full-screen loading overlay visible');
   assert.deepEqual(await page.locator('.pv-viewer-rail-name').allTextContents(),['1.webm','10.webm','2.webm'],
     'the video gallery and indexed viewer rail share SQL name order');
   const samples=await page.evaluate(contrastSamples);

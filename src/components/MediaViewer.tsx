@@ -100,6 +100,11 @@ const MAX_PDF_PAGE_DISPLAY_CACHE_ENTRIES = 48;
 const MAX_BOOK_IMAGE_CACHE_ENTRIES = 18;
 const BOOK_WHEEL_COOLDOWN_MS = 260;
 const VIDEO_PLAYBACK_SAVE_DEBOUNCE_MS = 180;
+// WebView2 can wait for the tail `moov` atom of an MP4 before emitting a
+// media event. Never leave the viewer's global loading layer up forever when
+// that request stalls; a playable video clears it earlier via the media
+// events below.
+const VIDEO_LOADING_TIMEOUT_MS = 15_000;
 const VIEWER_INFO_LAYOUT_KEY = "viewerInfoLayout";
 const VIEWER_COLLECTION_PAGE_SIZE = 64;
 const VIEWER_COLLECTION_CACHE_MAX_ITEMS = 1_280;
@@ -2066,6 +2071,33 @@ function VideoViewer({
   }, [item.durationSeconds, item.id, onLoadingChange, source]);
 
   useEffect(() => {
+    if (!source) return undefined;
+    let active = true;
+    const timeoutId = window.setTimeout(() => {
+      if (!active) return;
+      const video = videoRef.current;
+      if (!video) {
+        onLoadingChange(false);
+        onError("動画の読み込み先を確認できませんでした。");
+        return;
+      }
+      // HAVE_METADATA is enough to render the viewer and lets the user start
+      // playback manually even when autoplay is blocked. A playing/partially
+      // buffered video must never be covered by the global loading layer.
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA || !video.paused) {
+        onLoadingChange(false);
+        return;
+      }
+      onLoadingChange(false);
+      onError("動画の読み込みがタイムアウトしました。ファイルの場所・アクセス許可・MP4のメタデータを確認してください。");
+    }, VIDEO_LOADING_TIMEOUT_MS);
+    return () => {
+      active = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [item.id, onError, onLoadingChange, source, videoRef]);
+
+  useEffect(() => {
     const video = videoRef.current;
     if (!video || !source) return;
     video.loop = playbackPreferences.loop;
@@ -2463,6 +2495,7 @@ function VideoViewer({
         title={`クリックで再生・停止／左右をダブルタップで${seekSeconds}秒移動／ホイールで音量調整`}
       >
         <video
+          key={`${item.id}:${source}`}
           ref={videoRef}
           src={source}
           controls={false}
@@ -2472,7 +2505,19 @@ function VideoViewer({
           playsInline
           preload="auto"
           crossOrigin="anonymous"
-          onPlay={() => setPlaying(true)}
+          onPlay={() => {
+            setPlaying(true);
+            // Playback can begin before `loadedmetadata` on WebView2. Once
+            // frames are moving, a full-screen loading overlay is harmful to
+            // the viewing experience, so release it immediately.
+            onLoadingChange(false);
+          }}
+          onPlaying={() => {
+            setPlaying(true);
+            onLoadingChange(false);
+          }}
+          onCanPlay={() => onLoadingChange(false)}
+          onLoadedData={() => onLoadingChange(false)}
           onPause={() => setPlaying(false)}
           onVolumeChange={(event) => {
             if (volumeAnalysisSuppressRef.current) return;
