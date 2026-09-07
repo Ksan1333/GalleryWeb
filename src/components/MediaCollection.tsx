@@ -3510,7 +3510,18 @@ export function MediaCollection({
               }
               onDataChanged?.();
             }}
-            onRemove={(mediaId) => {
+            onRemove={(mediaId, replacement) => {
+              if (replacement) {
+                // Keep the parent selection aligned with MediaViewer's local
+                // replacement before the quiet catalog reload completes.
+                setSelected((current) => current?.id === mediaId ? replacement.item : current);
+                if (replacement.collectionIndex !== undefined) {
+                  viewerReturnTarget.current = {
+                    mediaId: replacement.item.id,
+                    index: replacement.collectionIndex,
+                  };
+                }
+              }
               setSelectedMedia((current) => {
                 if (!current.has(mediaId)) return current;
                 const next = new Map(current);

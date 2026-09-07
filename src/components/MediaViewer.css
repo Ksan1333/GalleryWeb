@@ -2237,10 +2237,10 @@
 }
 
 .pv-viewer-footer {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content) minmax(0, 1fr);
   min-height: 68px;
   align-items: center;
-  justify-content: space-between;
   gap: 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
   padding: 8px 16px;
@@ -2249,8 +2249,12 @@
 
 .pv-viewer-actions {
   display: flex;
+  grid-column: 2;
   min-width: 0;
+  max-width: min(100%, 980px);
   align-items: center;
+  justify-content: center;
+  justify-self: center;
   gap: 5px;
   overflow-x: auto;
   scrollbar-width: thin;
@@ -2315,6 +2319,8 @@
 
 .pv-viewer-tag-summary {
   display: flex;
+  grid-column: 3;
+  justify-self: end;
   max-width: 31%;
   flex: 0 0 auto;
   align-items: center;

@@ -297,7 +297,16 @@ export type MediaViewerProps = {
   };
   onClose: () => void;
   onItemPatch: (mediaId: string, patch: Partial<MediaItem>) => void;
-  onRemove: (mediaId: string) => void;
+  /**
+   * Remove the current item while optionally handing the parent the item that
+   * should stay open.  Passing the replacement in the same callback keeps the
+   * viewer mounted even when the catalog refresh removes the deleted item
+   * from the parent's list.
+   */
+  onRemove: (
+    mediaId: string,
+    replacement?: { item: MediaItem; collectionIndex?: number },
+  ) => void;
   onCurrentIdChange?: (mediaId: string, item?: MediaItem, index?: number) => void;
   /** Preserve an explicit cross-format/cross-folder input order, such as an OS file-open batch. */
   preserveItemOrder?: boolean;
@@ -3920,10 +3929,23 @@ export function MediaViewer({
       let nextCollectionIndex: number | undefined;
       let nextItem: MediaItem | undefined;
       if (collection && activeCollectionIndex >= 0 && collectionTotalCount > 1) {
-        nextCollectionIndex = activeCollectionIndex < collectionTotalCount - 1
+        const preferredIndex = activeCollectionIndex < collectionTotalCount - 1
           ? activeCollectionIndex + 1
           : activeCollectionIndex - 1;
-        nextItem = await loadCollectionItem(nextCollectionIndex);
+        const alternateIndex = preferredIndex === activeCollectionIndex + 1
+          ? activeCollectionIndex - 1
+          : activeCollectionIndex + 1;
+        // A folder can change while the viewer is open. Try the preferred
+        // neighbor and then the opposite side before deciding that this was
+        // the last visible item; a short/shifted page must not close the UI.
+        for (const candidateIndex of [preferredIndex, alternateIndex]) {
+          if (candidateIndex < 0 || candidateIndex >= collectionTotalCount) continue;
+          const candidate = await loadCollectionItem(candidateIndex);
+          if (!candidate || candidate.id === item.id) continue;
+          nextCollectionIndex = candidateIndex;
+          nextItem = candidate;
+          break;
+        }
       } else {
         const currentIndex = items.findIndex((candidate) => candidate.id === item.id);
         nextItem = currentIndex >= 0
@@ -3933,8 +3955,18 @@ export function MediaViewer({
       const result = await recycleMediaItem(item.id);
       const failure = resultError(result, "ごみ箱への移動はデスクトップアプリで利用できます。");
       if (failure || !result.data) throw failure ?? new Error("ごみ箱へ移動できませんでした。");
-      if (nextItem) changeActive(nextItem.id, nextCollectionIndex);
-      onRemove(item.id);
+      if (nextItem) {
+        // Move the local viewer first, then tell the parent which item should
+        // replace the deleted one.  The explicit replacement prevents a
+        // catalog refresh from briefly rendering an empty/closed viewer.
+        changeActive(nextItem.id, nextCollectionIndex);
+        onRemove(item.id, {
+          item: nextItem,
+          collectionIndex: nextCollectionIndex,
+        });
+      } else {
+        onRemove(item.id);
+      }
       if (!nextItem) onClose();
       return nextItem ? `「${nextItem.name}」を開きました。` : undefined;
     });

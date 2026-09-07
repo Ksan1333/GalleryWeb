@@ -134,10 +134,10 @@ export function AdjacentSimilarityGroups({
             }}
             onItemPatch={(mediaId, patch) => setSelectedItems((current) => current.map((item) =>
               item.id === mediaId ? { ...item, ...patch } : item))}
-            onRemove={(mediaId) => {
+            onRemove={(mediaId, replacement) => {
               const next = selectedItems.filter((item) => item.id !== mediaId);
               setSelectedItems(next);
-              setSelectedId(next[0]?.id);
+              setSelectedId(replacement?.item.id ?? next[0]?.id);
             }}
             onCurrentIdChange={setSelectedId}
           />

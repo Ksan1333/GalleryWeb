@@ -890,8 +890,9 @@ function App() {
                 item.id === mediaId ? { ...item, ...patch } : item));
               void refreshSummary();
             }}
-            onRemove={(mediaId) => {
+            onRemove={(mediaId, replacement) => {
               setHomeFavoriteMedia((current) => current.filter((item) => item.id !== mediaId));
+              if (replacement) setHomeSelectedMediaId(replacement.item.id);
               void refreshSummary();
             }}
             onCurrentIdChange={(mediaId) => setHomeSelectedMediaId(mediaId)}

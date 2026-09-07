@@ -41,7 +41,9 @@ const checks = [
   [native.includes("schedule_startup_diagnostics"), "database integrity diagnostics run after startup"],
   [watcher.includes("RecommendedWatcher"), "folder monitoring is filesystem-event driven"],
   [native.includes("schedule_startup_missing_recovery") && native.includes("Err(_) => Some(true)"), "transient drive errors cannot permanently hide a large library"],
-  [viewer.includes("if (nextItem) changeActive(nextItem.id, nextCollectionIndex)") && viewer.includes("if (!nextItem) onClose()"), "recycling from the viewer advances without closing when another media item exists"],
+  [viewer.includes("changeActive(nextItem.id, nextCollectionIndex)")
+    && viewer.includes("onRemove(item.id, {")
+    && viewer.includes("if (!nextItem) onClose()"), "recycling from the viewer advances without closing when another media item exists"],
   [videoSettings.includes("volume: 0.5") && viewer.includes("VIDEO_PLAYBACK_PREFERENCE_KEY") && !viewer.includes("setVolume(1)"), "video volume is persisted and restored instead of resetting to full volume"],
 ];
 
