@@ -75,6 +75,15 @@ import {
   type VideoPlaybackPreferences,
 } from "./VideoViewerSettings";
 import { Icon, type IconName } from "./Icon";
+import {
+  analyzeVideoVolume,
+  cacheVideoVolumeAnalysis,
+  createVideoAudioPipeline,
+  disposeVideoAudioPipeline,
+  getCachedVideoVolumeAnalysis,
+  VIDEO_VOLUME_REDUCTION_GAIN,
+  type VideoAudioPipeline,
+} from "../services/videoVolumeNormalizer";
 import "./MediaViewer.css";
 
 const FRAME_SECONDS = 1 / 30;
@@ -1981,6 +1990,7 @@ function VideoViewer({
   const [relativeTargetTime, setRelativeTargetTime] = useState(0);
   const [volume, setVolume] = useState(playbackPreferences.volume);
   const [muted, setMuted] = useState(playbackPreferences.muted);
+  const [autoVolumeReductionActive, setAutoVolumeReductionActive] = useState(false);
   const [wheelFeedback, setWheelFeedback] = useState<{ icon: IconName; text: string }>();
   const [controlsVisible, setControlsVisible] = useState(true);
   const previewRef = useRef<HTMLVideoElement>(null);
@@ -1993,6 +2003,18 @@ function VideoViewer({
   const relativeScrubActiveRef = useRef(false);
   const relativeAnchorRef = useRef(0);
   const relativeWasPlayingRef = useRef(false);
+  const volumeAnalysisSuppressRef = useRef(false);
+  const audioPipelineRef = useRef<VideoAudioPipeline | undefined>(undefined);
+  const audioPipelineVideoRef = useRef<HTMLVideoElement | undefined>(undefined);
+
+  useEffect(() => {
+    return () => {
+      const video = audioPipelineVideoRef.current;
+      if (video) disposeVideoAudioPipeline(video);
+      audioPipelineRef.current = undefined;
+      audioPipelineVideoRef.current = undefined;
+    };
+  }, [videoRef]);
 
   const revealControls = useCallback(() => {
     setControlsVisible(true);
@@ -2029,6 +2051,7 @@ function VideoViewer({
     setDuration(item.durationSeconds ?? 0);
     setVolume(playbackPreferences.volume);
     setMuted(playbackPreferences.muted);
+    setAutoVolumeReductionActive(false);
     setWheelFeedback(undefined);
     onLoadingChange(Boolean(source));
   }, [item.durationSeconds, item.id, onLoadingChange, source]);
@@ -2042,6 +2065,75 @@ function VideoViewer({
     setMuted(playbackPreferences.muted);
     setVolume(playbackPreferences.volume);
   }, [item.id, playbackPreferences.loop, playbackPreferences.muted, playbackPreferences.volume, source, videoRef]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video && !audioPipelineRef.current) {
+      audioPipelineRef.current = createVideoAudioPipeline(video);
+      audioPipelineVideoRef.current = video;
+    }
+    const pipeline = audioPipelineRef.current;
+    if (!video || !source || !pipeline) return undefined;
+    let active = true;
+    const analysisKey = `${item.id}:${item.modifiedAt ?? ""}:${item.sizeBytes}`;
+    const originalVolume = video.volume;
+    const originalMuted = video.muted;
+    const cachedAnalysis = getCachedVideoVolumeAnalysis(analysisKey);
+    if (cachedAnalysis) {
+      const cachedShouldReduce = cachedAnalysis.shouldReduce;
+      setAutoVolumeReductionActive(cachedShouldReduce);
+      const cachedVolume = cachedShouldReduce ? VIDEO_VOLUME_REDUCTION_GAIN : originalVolume;
+      video.volume = cachedVolume;
+      setVolume(cachedVolume);
+      pipeline.gain.gain.value = 1;
+      return () => {
+        active = false;
+        video.volume = originalVolume;
+        video.muted = originalMuted;
+        pipeline.gain.gain.value = 1;
+      };
+    }
+    volumeAnalysisSuppressRef.current = true;
+    // Cap audible output at 50% while exposing the raw media signal to the
+    // analyser. A muted/zero-volume preference stays silent during analysis.
+    pipeline.gain.gain.value = originalMuted || originalVolume <= 0
+      ? 0
+      : Math.min(originalVolume, VIDEO_VOLUME_REDUCTION_GAIN);
+    video.muted = false;
+    video.volume = 1;
+    void pipeline.context.resume().catch(() => undefined);
+
+    void analyzeVideoVolume(video, pipeline).then((analysis) => {
+      if (!active) return;
+      const shouldReduce = analysis?.shouldReduce === true;
+      if (analysis) cacheVideoVolumeAnalysis(analysisKey, analysis);
+      setAutoVolumeReductionActive(shouldReduce);
+      const nextVolume = shouldReduce ? VIDEO_VOLUME_REDUCTION_GAIN : originalVolume;
+      video.volume = nextVolume;
+      video.muted = originalMuted;
+      setVolume(nextVolume);
+      setMuted(originalMuted);
+      pipeline.gain.gain.value = 1;
+      volumeAnalysisSuppressRef.current = false;
+    }).catch(() => {
+      if (!active) return;
+      video.volume = originalVolume;
+      video.muted = originalMuted;
+      setAutoVolumeReductionActive(false);
+      setVolume(originalVolume);
+      setMuted(originalMuted);
+      pipeline.gain.gain.value = 1;
+      volumeAnalysisSuppressRef.current = false;
+    });
+
+    return () => {
+      active = false;
+      volumeAnalysisSuppressRef.current = false;
+      pipeline.gain.gain.value = 1;
+      video.volume = originalVolume;
+      video.muted = originalMuted;
+    };
+  }, [item.id, item.modifiedAt, item.sizeBytes, source, videoRef]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -2374,6 +2466,7 @@ function VideoViewer({
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onVolumeChange={(event) => {
+            if (volumeAnalysisSuppressRef.current) return;
             setVolume(event.currentTarget.volume);
             setMuted(event.currentTarget.muted);
           }}
@@ -2537,7 +2630,10 @@ function VideoViewer({
               style={{ "--pv-volume-progress": `${volume * 100}%` } as React.CSSProperties}
               onChange={(event) => changeVolume(Number(event.currentTarget.value))}
             />
-            <small>{muted ? "消音" : `${Math.round(volume * 100)}%`}</small>
+            <small title={autoVolumeReductionActive ? "大きな音量を検出したため、再生ゲインを50%から開始しています" : undefined}>
+              {muted ? "消音" : `${Math.round(volume * 100)}%`}
+              {autoVolumeReductionActive && !muted ? " · 自動調整" : ""}
+            </small>
           </div>
         </div>
       </div>
