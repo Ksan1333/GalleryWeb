@@ -70,6 +70,7 @@ jobs:
           npm run test:external-explorer
           npm run test:external-first-paint
           npm run test:viewer-interactions
+          npm run test:video-playback
           npm run test:pdf-book
 
       - name: Verify Rust formatting

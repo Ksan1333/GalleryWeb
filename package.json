@@ -1,7 +1,7 @@
 {
   "name": "galleryweb",
   "private": true,
-  "version": "0.2.10",
+  "version": "0.2.11",
   "type": "module",
   "scripts": {
     "dev": "vite --configLoader runner",
@@ -23,6 +23,7 @@
     "test:external-explorer": "node scripts/test-external-explorer.mjs",
     "test:external-first-paint": "node scripts/test-external-explorer.mjs --first-paint",
     "test:viewer-interactions": "node scripts/test-viewer-interactions.mjs",
+    "test:video-playback": "node scripts/test-video-playback.mjs",
     "test:settings": "node --test scripts/test-settings-access.mjs",
     "test:gallery-consistency": "node --test scripts/test-gallery-consistency.mjs scripts/test-priority-gallery.mjs",
     "test:book-viewer": "node --test scripts/test-book-navigation.mjs scripts/test-viewer-dialog.mjs scripts/test-book-page-cache.mjs",

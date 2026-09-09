@@ -2368,15 +2368,38 @@
 
 .pv-viewer-page-loading {
   position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 12px;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 7px 10px;
+  border-radius: 6px;
   color: #d9caea;
-  background: rgba(8, 6, 11, 0.54);
+  background: #19151f;
   pointer-events: none;
 }
+
+.pv-video-status {
+  position: absolute;
+  z-index: 3;
+  top: 12px;
+  left: 12px;
+  max-width: calc(100% - 24px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #19151f;
+  color: #eee8f5;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.pv-video-status button { pointer-events: auto; color: inherit; background: #39303f; border: 1px solid #756282; border-radius: 4px; padding: 4px 8px; cursor: pointer; white-space: nowrap; }
+.pv-video-transport > .pv-video-compatibility { width: auto; padding: 0 8px; font-size: 11px; white-space: nowrap; }
 
 .pv-viewer-page-loading span,
 .pv-viewer-loading i {
@@ -2391,6 +2414,8 @@
 .pv-viewer-page-loading b {
   font-size: 11px;
 }
+
+.pv-viewer-page-loading span { width: 14px; height: 14px; }
 
 .pv-book-side-panel {
   position: absolute;

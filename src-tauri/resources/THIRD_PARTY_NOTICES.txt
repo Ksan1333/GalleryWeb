@@ -1,6 +1,17 @@
 PixVault for Windows - Third-party notices
 ===========================================
 
+Optional compatibility video playback engine (downloaded on first use)
+FFmpeg n8.1.2-50-g1a748fe2cd, BtbN win64 LGPL shared build, 2026-08-31.
+Project: https://ffmpeg.org/
+Build and source recipes: https://github.com/BtbN/FFmpeg-Builds
+Source: https://github.com/FFmpeg/FFmpeg/tree/1a748fe2cd
+Upstream download: https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-31-13-27
+License: LGPL (full license texts and build notices are retained alongside the
+downloaded engine). Invoked as an independent executable; not linked to PixVault.
+The engine is downloaded directly from upstream over HTTPS and SHA-256 verified.
+Video files remain on the user's computer and are not uploaded.
+
 gifenc 1.0.3
 Project: https://github.com/mattdesl/gifenc
 License: MIT

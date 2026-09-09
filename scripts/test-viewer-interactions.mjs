@@ -53,6 +53,9 @@ const server = await createServer({
 });
 
 function installFixture() {
+  // This fixture models successful playback; suppress real browser decode
+  // errors from its placeholder SVG. Explicit failure tests live separately.
+  document.addEventListener('error',e=>{if(e.isTrusted&&e.target instanceof HTMLMediaElement)e.stopImmediatePropagation()},true);
   const svg = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="gray"/></svg>');
   const state = window.__fixture = {unexpected:[], calls:[], playCalls:0, pauseCalls:0};
   state.makeItem = (i, kind='video') => ({id:`${kind==='archive'?'book':'video'}-${i}`,rootId:'fixture-root',
@@ -66,6 +69,7 @@ function installFixture() {
     duration:{configurable:true,get(){return 120}},
     paused:{configurable:true,get(){return paused.get(this)??false}},
     readyState:{configurable:true,get(){return 4}},
+    error:{configurable:true,get(){return null}},
   });
   HTMLMediaElement.prototype.play = function(){state.playCalls++;paused.set(this,false);this.dispatchEvent(new Event('play'));return Promise.resolve()};
   HTMLMediaElement.prototype.pause = function(){state.pauseCalls++;paused.set(this,true);this.dispatchEvent(new Event('pause'))};
