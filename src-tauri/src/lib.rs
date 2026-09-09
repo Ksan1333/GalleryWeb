@@ -19,7 +19,7 @@ mod system_metrics;
 mod tag_translations;
 mod thumbnail_cache;
 mod video_decode;
-mod video_playback;
+mod vlc_playback;
 mod web_search;
 mod windows_notifications;
 mod x_downloader;
@@ -4390,8 +4390,6 @@ pub fn run() {
                 ))
             })?;
             diagnostics::initialize(&data_directory).map_err(std::io::Error::other)?;
-            let playback_data = data_directory.clone();
-            std::thread::spawn(move || video_playback::cleanup_stale_sessions(&playback_data));
             let database_path = data_directory.join("galleryweb.sqlite3");
             let ai_model_directory = data_directory.join("ai-models");
             let thumbnail_cache_directory = data_directory.join("media-thumbnails");
@@ -4488,9 +4486,11 @@ pub fn run() {
             notify_foreground_activity,
             take_pending_x_url,
             take_pending_external_media,
-            video_playback::start_video_playback,
-            video_playback::get_video_playback_status,
-            video_playback::cancel_video_playback,
+            vlc_playback::open_vlc_player,
+            vlc_playback::read_vlc_status,
+            vlc_playback::read_vlc_frame,
+            vlc_playback::control_vlc_player,
+            vlc_playback::close_vlc_player,
             show_windows_notification,
             pick_library_root,
             pick_drawing_reference,

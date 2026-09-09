@@ -46,6 +46,9 @@ jobs:
       - name: Type-check and build frontend
         run: npm run build
 
+      - name: Prepare pinned libVLC runtime
+        run: npm run prepare:libvlc
+
       - name: Verify performance, themes and layout contract
         run: |
           npm run perf:budget
@@ -105,6 +108,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/release-manifest.json
+            src-tauri/target/libvlc/vlc-3.0.23.tar.xz
             artifacts/thumbnail-benchmark.json
           if-no-files-found: error
           retention-days: 14

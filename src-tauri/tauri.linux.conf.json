@@ -15,6 +15,10 @@
     ]
   },
   "bundle": {
+    "resources": [
+      "resources/THIRD_PARTY_AI_NOTICES.txt",
+      "resources/THIRD_PARTY_NOTICES.txt"
+    ],
     "targets": ["deb", "appimage"]
   }
 }

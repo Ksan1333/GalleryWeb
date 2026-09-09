@@ -21,8 +21,9 @@ const budgets = {
   // 0.2.6 adds up to 4 KiB for staged external-open hydration and release notes.
   // 0.2.7 allows 6 KiB for lazy viewer contrast/pointer handling and history.
   // 0.2.9 allows 8 KiB for the viewer replacement handoff and centered action bar.
+  // 0.3.0 adds 8 KiB for the lazy libVLC canvas/IPC bridge and release notes.
   // Startup and individual chunk limits stay unchanged.
-  totalAssetBytes: 2628 * 1024,
+  totalAssetBytes: 2636 * 1024,
 };
 
 function fail(message) {

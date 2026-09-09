@@ -9,7 +9,8 @@ import {
 } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useViewerFullscreen } from "../hooks/useViewerFullscreen";
-import { useVideoPlaybackSource } from "../hooks/useVideoPlaybackSource";
+import { useVideoPlayback } from "../hooks/useVideoPlayback";
+import { VlcVideoHandle, type VideoHandle } from "../services/vlcPlayer";
 import { bookSeekKeyPage, bookSeekPosition } from "../services/bookNavigation";
 import { activateViewerDialog } from "../services/viewerDialog";
 import type {
@@ -1020,9 +1021,13 @@ async function persistCapture(dataUrl: string, name: string): Promise<string> {
 }
 
 function canvasDataUrl(
-  source: HTMLImageElement | HTMLVideoElement,
+  source: HTMLImageElement | VideoHandle,
   mimeType: "image/png" | "image/jpeg" = "image/png",
 ): string {
+  if (source instanceof VlcVideoHandle) {
+    if (source.readyState < 2) throw new Error("動画をまだ描画できません。");
+    return source.canvas.toDataURL(mimeType, mimeType === "image/jpeg" ? 0.92 : undefined);
+  }
   const width = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
   const height = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
   if (!width || !height) throw new Error("表示中のメディアをまだ描画できません。");
@@ -1968,7 +1973,7 @@ function ImageViewer({
 
 function VideoViewer({
   item,
-  source: originalSource,
+  source,
   videoRef,
   playbackPreferences,
   onPlaybackPreferencesChange,
@@ -1980,7 +1985,7 @@ function VideoViewer({
 }: {
   item: MediaItem;
   source?: string;
-  videoRef: React.RefObject<HTMLVideoElement | null>;
+  videoRef: React.RefObject<VideoHandle | null>;
   playbackPreferences: VideoPlaybackPreferences;
   onPlaybackPreferencesChange: (patch: Partial<VideoPlaybackPreferences>) => void;
   onError: (message: string) => void;
@@ -1989,8 +1994,8 @@ function VideoViewer({
   onMetadata: (metadata: ViewerRuntimeMetadata) => void;
   seekSeconds: number;
 }) {
-  const playback = useVideoPlaybackSource(item.id, originalSource, videoRef, onLoadingChange);
-  const source = playback.source;
+  const nativeCanvasRef = useRef<HTMLCanvasElement>(null);
+  const playback = useVideoPlayback(item.id, videoRef, nativeCanvasRef, playbackPreferences, onLoadingChange);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(item.durationSeconds ?? 0);
@@ -2006,6 +2011,7 @@ function VideoViewer({
   const [wheelFeedback, setWheelFeedback] = useState<{ icon: IconName; text: string }>();
   const [controlsVisible, setControlsVisible] = useState(true);
   const previewRef = useRef<HTMLVideoElement>(null);
+  const nativePreviewRef = useRef<HTMLCanvasElement>(null);
   const feedbackTimerRef = useRef<number | undefined>(undefined);
   const clickTimerRef = useRef<number | undefined>(undefined);
   const surfacePointers = useRef(new Set<number>());
@@ -2018,6 +2024,24 @@ function VideoViewer({
   const volumeAnalysisSuppressRef = useRef(false);
   const audioPipelineRef = useRef<VideoAudioPipeline | undefined>(undefined);
   const audioPipelineVideoRef = useRef<HTMLVideoElement | undefined>(undefined);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const playing = () => setPlaying(true);
+    const paused = () => setPlaying(false);
+    const volume = () => { if (!volumeAnalysisSuppressRef.current) { setVolume(video.volume); setMuted(video.muted); } };
+    const position = () => setPosition(video.currentTime);
+    const metadata = () => {
+      const duration = Number.isFinite(video.duration) ? video.duration : 0;
+      setDuration(duration);
+      onMetadata({ width: video.videoWidth || undefined, height: video.videoHeight || undefined, durationSeconds: duration });
+    };
+    const analysis = () => { if (video instanceof VlcVideoHandle) setAutoVolumeReductionActive(video.autoReduced); };
+    const events = { play: playing, playing, pause: paused, volumechange: volume, timeupdate: position, loadedmetadata: metadata, durationchange: metadata, volumeanalysis: analysis };
+    for (const [name, handler] of Object.entries(events)) video.addEventListener(name, handler);
+    return () => { for (const [name, handler] of Object.entries(events)) video.removeEventListener(name, handler); };
+  }, [videoRef, item.id, playback.generation, onMetadata]);
 
   useEffect(() => {
     return () => {
@@ -2072,16 +2096,27 @@ function VideoViewer({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !source) return;
+    if (!video) return;
     video.loop = playbackPreferences.loop;
-    video.muted = playbackPreferences.muted;
-    video.volume = playbackPreferences.volume;
-    setMuted(playbackPreferences.muted);
-    setVolume(playbackPreferences.volume);
-  }, [item.id, playbackPreferences.loop, playbackPreferences.muted, playbackPreferences.volume, source, videoRef]);
+  }, [item.id, playbackPreferences.loop, videoRef, playback.generation]);
 
   useEffect(() => {
     const video = videoRef.current;
+    if (!video) return;
+    video.muted = playbackPreferences.muted;
+    setMuted(playbackPreferences.muted);
+  }, [item.id, playbackPreferences.muted, videoRef, playback.generation]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video instanceof VlcVideoHandle) video.restoreVolumePreference(playbackPreferences.volume);
+    else { video.volume = playbackPreferences.volume; setVolume(playbackPreferences.volume); }
+  }, [item.id, playbackPreferences.volume, videoRef, playback.generation]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video instanceof VlcVideoHandle) return;
     if (video && !audioPipelineRef.current) {
       audioPipelineRef.current = createVideoAudioPipeline(video);
       audioPipelineVideoRef.current = video;
@@ -2151,7 +2186,7 @@ function VideoViewer({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !source || !playback.autoPlay) return;
+    if (!video || !source || video instanceof VlcVideoHandle) return;
     const startPlayback = () => {
       void video.play().catch(() => {
         // Browser preview may block autoplay with sound. The installed WebView
@@ -2165,7 +2200,7 @@ function VideoViewer({
     }
     video.addEventListener("canplay", startPlayback, { once: true });
     return () => video.removeEventListener("canplay", startPlayback);
-  }, [item.id, source, playback.autoPlay, videoRef]);
+  }, [item.id, source, videoRef, playback.generation]);
 
   useEffect(() => () => {
     if (feedbackTimerRef.current !== undefined) window.clearTimeout(feedbackTimerRef.current);
@@ -2182,6 +2217,21 @@ function VideoViewer({
     }
     revealControls();
   }, [item.id, menusHidden, revealControls]);
+
+  useEffect(() => {
+    if (!seeking || !playback.native) return;
+    let frame: number;
+    const draw = () => {
+      const source = nativeCanvasRef.current, preview = nativePreviewRef.current;
+      if (source && preview && source.width && source.height) {
+        preview.width = 160; preview.height = Math.max(1, Math.round(160 * source.height / source.width));
+        preview.getContext("2d")?.drawImage(source, 0, 0, preview.width, preview.height);
+      }
+      frame = requestAnimationFrame(draw);
+    };
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, [seeking, playback.native]);
 
   useEffect(() => {
     if (!seeking || !previewRef.current || !Number.isFinite(previewRef.current.duration)) return;
@@ -2474,54 +2524,19 @@ function VideoViewer({
         }}
         title={`クリックで再生・停止／左右をダブルタップで${seekSeconds}秒移動／ホイールで音量調整`}
       >
-        <video
-          ref={videoRef}
+        {playback.native ? <canvas ref={nativeCanvasRef} className="pv-vlc-canvas" aria-label="libVLCによる動画表示" /> : <video
+          ref={videoRef as React.RefObject<HTMLVideoElement | null>}
           src={source}
           controls={false}
-          autoPlay={playback.autoPlay}
+          autoPlay
           loop={playbackPreferences.loop}
           muted={playbackPreferences.muted}
           playsInline
           preload="auto"
           crossOrigin="anonymous"
-          onPlay={() => {
-            setPlaying(true);
-          }}
-          onPlaying={() => {
-            setPlaying(true);
-            onLoadingChange(false);
-          }}
-          onCanPlay={() => onLoadingChange(false)}
-          onLoadedData={() => onLoadingChange(false)}
-          onPause={() => setPlaying(false)}
-          onVolumeChange={(event) => {
-            if (volumeAnalysisSuppressRef.current) return;
-            setVolume(event.currentTarget.volume);
-            setMuted(event.currentTarget.muted);
-          }}
-          onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
-          onLoadedMetadata={(event) => {
-            const loadedDuration = Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0;
-            setDuration(loadedDuration);
-            onMetadata({
-              width: event.currentTarget.videoWidth,
-              height: event.currentTarget.videoHeight,
-              durationSeconds: loadedDuration,
-            });
-            onLoadingChange(false);
-          }}
-          onDurationChange={(event) => {
-            const loadedDuration = Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0;
-            setDuration(loadedDuration);
-            onMetadata({
-              width: event.currentTarget.videoWidth || undefined,
-              height: event.currentTarget.videoHeight || undefined,
-              durationSeconds: loadedDuration,
-            });
-          }}
         >
           この動画形式は再生できません。
-        </video>
+        </video>}
         {wheelFeedback && (
           <div className="pv-video-wheel-feedback" role="status" aria-live="polite">
             <Icon name={wheelFeedback.icon} />
@@ -2540,7 +2555,7 @@ function VideoViewer({
               style={{ left: `clamp(88px, ${duration > 0 ? previewTime / duration * 100 : 0}%, calc(100% - 88px))` }}
               aria-hidden="true"
             >
-              <video ref={previewRef} src={source} muted playsInline preload="metadata" />
+              {playback.native ? <canvas ref={nativePreviewRef} /> : <video ref={previewRef} src={source} muted playsInline preload="metadata" />}
               <span>{formatTime(previewTime)}</span>
             </div>
           )}
@@ -2635,7 +2650,6 @@ function VideoViewer({
           <IconControl icon="stepForward" label="1コマ進む" onClick={() => seekBy(FRAME_SECONDS, true)} />
           <IconControl icon="forward10" label="10秒進む" onClick={() => seekBy(10)} />
           <span>{formatTime(position)} / {formatTime(duration)}</span>
-          <button type="button" className="pv-video-compatibility" onClick={playback.useCompatibility} disabled={playback.phase === "preparing"} title="音声のみ・映像が出ない場合も、互換形式で開き直します">互換再生</button>
           <div className="pv-video-volume">
             <button
               type="button"
@@ -3256,7 +3270,7 @@ export function MediaViewer({
   const viewerShellRef = useRef<HTMLElement>(null);
   const viewerBackdropRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<VideoHandle>(null);
   const bookCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const [favorite, setFavoriteState] = useState(item?.isFavorite ?? false);
   const [ageRating, setAgeRatingState] = useState<AgeRating>(item?.ageRating ?? "UNRATED");
@@ -3969,9 +3983,15 @@ export function MediaViewer({
           ? items[currentIndex + 1] ?? items[currentIndex - 1]
           : viewerRailItems.find((candidate) => candidate.id !== item.id);
       }
+      const nativePlayback = videoRef.current instanceof VlcVideoHandle ? videoRef.current : undefined;
+      // Wait for VLC to close the source handle before Windows moves the file.
+      await nativePlayback?.dispose();
       const result = await recycleMediaItem(item.id);
       const failure = resultError(result, "ごみ箱への移動はデスクトップアプリで利用できます。");
-      if (failure || !result.data) throw failure ?? new Error("ごみ箱へ移動できませんでした。");
+      if (failure || !result.data) {
+        nativePlayback?.dispatchEvent(new Event("restart"));
+        throw failure ?? new Error("ごみ箱へ移動できませんでした。");
+      }
       if (nextItem) {
         // Move the local viewer first, then tell the parent which item should
         // replace the deleted one.  The explicit replacement prevents a

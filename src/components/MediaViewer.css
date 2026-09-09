@@ -1407,9 +1407,11 @@
   cursor: pointer;
 }
 
-.pv-video-surface > video {
+.pv-video-surface > video,
+.pv-video-surface > .pv-vlc-canvas {
   width: 100%;
   height: 100%;
+  object-fit: contain;
 }
 
 .pv-video-surface:focus-visible {
@@ -1514,7 +1516,8 @@
   pointer-events: none;
 }
 
-.pv-video-seek-preview video {
+.pv-video-seek-preview video,
+.pv-video-seek-preview canvas {
   width: 176px;
   height: 99px;
   object-fit: contain;
@@ -2399,7 +2402,6 @@
 }
 
 .pv-video-status button { pointer-events: auto; color: inherit; background: #39303f; border: 1px solid #756282; border-radius: 4px; padding: 4px 8px; cursor: pointer; white-space: nowrap; }
-.pv-video-transport > .pv-video-compatibility { width: auto; padding: 0 8px; font-size: 11px; white-space: nowrap; }
 
 .pv-viewer-page-loading span,
 .pv-viewer-loading i {

@@ -53,11 +53,13 @@ const server = await createServer({
 });
 
 function installFixture() {
+  Object.defineProperty(navigator, 'platform', {value:'Win32',configurable:true});
   // This fixture models successful playback; suppress real browser decode
   // errors from its placeholder SVG. Explicit failure tests live separately.
   document.addEventListener('error',e=>{if(e.isTrusted&&e.target instanceof HTMLMediaElement)e.stopImmediatePropagation()},true);
   const svg = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="gray"/></svg>');
-  const state = window.__fixture = {unexpected:[], calls:[], playCalls:0, pauseCalls:0};
+  const state = window.__fixture = {unexpected:[], calls:[], playCalls:0, pauseCalls:0,
+    playback:{state:'playing',message:'',time:60,duration:120,width:640,height:360,volume:.5,muted:false,autoReduced:false}};
   state.makeItem = (i, kind='video') => ({id:`${kind==='archive'?'book':'video'}-${i}`,rootId:'fixture-root',
     relativePath:`${['1','10','2'][i]}.${kind==='archive'?'zip':'webm'}`,path:`E:/Fixture/${['1','10','2'][i]}.${kind==='archive'?'zip':'webm'}`,
     name:`${['1','10','2'][i]}.${kind==='archive'?'zip':'webm'}`,kind,sizeBytes:4096,width:640,height:360,
@@ -77,6 +79,23 @@ function installFixture() {
   window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,
     convertFileSrc:()=>svg,invoke:async(command,args={})=>{
       state.calls.push({command,args});
+      if(command==='open_vlc_player'){state.playCalls++;return 'viewer-job';}
+      if(command==='close_vlc_player')return null;
+      if(command==='read_vlc_status')return {...state.playback};
+      if(command==='read_vlc_frame'){
+        if(args.after===1)return new ArrayBuffer(0);
+        const packet=new ArrayBuffer(24+640*360*4),view=new DataView(packet);
+        [640,360,640*4,1,640,360].forEach((v,i)=>view.setUint32(i*4,v,true));return packet;
+      }
+      if(command==='control_vlc_player'){
+        const control=args.control;
+        if(control.type==='seek')state.playback.time=control.time;
+        if(control.type==='pause'){state.pauseCalls++;state.playback.state='paused';}
+        if(control.type==='play'){state.playCalls++;state.playback.state='playing';}
+        if(control.type==='volume'){state.playback.volume=control.volume;state.playback.muted=control.muted;}
+        if(control.type==='initialVolume')state.playback.volume=state.playback.autoReduced?Math.min(.5,control.volume):control.volume;
+        return null;
+      }
       if(command.startsWith('plugin:event|'))return 1;
       if(command==='plugin:window|is_fullscreen')return false;
       if(command==='plugin:window|set_theme'||command==='set_preference')return null;
@@ -132,13 +151,23 @@ try {
   await page.goto(base);
   await page.locator('.root-folder-main').click();
   await page.locator('[data-media-id="video-0"]').click();
-  await page.locator('.pv-video-surface > video').waitFor();
+  await page.locator('.pv-video-surface > canvas').waitFor();
   await page.locator('.pv-media-info-list dd').first().waitFor();
   await page.waitForFunction(() => !document.querySelector('.pv-viewer-page-loading'));
   assert.equal(await page.locator('.pv-viewer-page-loading').count(), 0,
     'a playing video must not keep the full-screen loading overlay visible');
   assert.deepEqual(await page.locator('.pv-viewer-rail-name').allTextContents(),['1.webm','10.webm','2.webm'],
     'the video gallery and indexed viewer rail share SQL name order');
+  await page.evaluate(()=>{
+    window.__fixture.playback.autoReduced=true;
+    window.dispatchEvent(new CustomEvent('pixvault:video-playback-settings',{detail:{volume:.9,muted:false,loop:false}}));
+  });
+  await page.waitForTimeout(500);
+  assert.equal(await page.evaluate(()=>window.__fixture.playback.volume),.5,'late saved volume cannot override native loudness protection');
+  await page.getByRole('button',{name:'ミュート',exact:true}).click();
+  await page.waitForTimeout(250);
+  assert.equal(await page.evaluate(()=>window.__fixture.playback.volume),.5,'muting cannot restore the louder saved volume');
+  await page.getByRole('button',{name:'ミュートを解除',exact:true}).click();
   const samples=await page.evaluate(contrastSamples);
   console.log('LIGHT CONTRAST',JSON.stringify(samples));
   if(!diagnose) {
@@ -154,8 +183,8 @@ try {
     await page.evaluate(()=>document.querySelector('.pv-media-info-panel').classList.remove('is-collapsed','is-dragging','drag-target-bottomSheet'));
   }
   const surface=page.locator('.pv-video-surface');
-  const time=()=>page.locator('.pv-video-surface > video').evaluate(v=>v.currentTime);
-  const reset=()=>page.locator('.pv-video-surface > video').evaluate(v=>{v.currentTime=60});
+  const time=()=>page.evaluate(()=>window.__fixture.playback.time);
+  const reset=async()=>{await page.evaluate(()=>window.__fixture.playback.time=60);await page.waitForTimeout(500)};
   const bounds=await surface.boundingBox();
   await surface.dblclick({position:{x:bounds.width*.8,y:bounds.height*.5}});
   const mouseTime=await time();await reset();

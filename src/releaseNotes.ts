@@ -11,6 +11,17 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.3.0",
+    date: "2026-09-10",
+    title: "libVLCによる元動画の直接再生",
+    changes: [
+      "Windows版は同梱libVLCで元動画を直接再生。初回のエンジンダウンロードは不要",
+      "互換再生用の動画変換・FFmpeg取得・一時動画作成を削除",
+      "シーク・ダブルタップ・音量・ループ・画像保存を接続し、読み込み中も操作を維持",
+      "初版の表示用フレームは最大フルHD・SDR。元動画の解像度や内容は変更しません",
+    ],
+  },
+  {
     version: "0.2.11",
     date: "2026-09-10",
     title: "動画の互換再生と操作を妨げない読み込み表示",

@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PixVault for Windows",
-  "version": "0.2.11",
+  "version": "0.3.0",
   "identifier": "com.ninji.galleryweb",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run prepare:libvlc && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run prepare:libvlc && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -64,10 +64,11 @@
         "role": "Viewer"
       }
     ],
-    "resources": [
-      "resources/THIRD_PARTY_AI_NOTICES.txt",
-      "resources/THIRD_PARTY_NOTICES.txt"
-    ],
+    "resources": {
+      "resources/THIRD_PARTY_AI_NOTICES.txt": "resources/THIRD_PARTY_AI_NOTICES.txt",
+      "resources/THIRD_PARTY_NOTICES.txt": "resources/THIRD_PARTY_NOTICES.txt",
+      "target/libvlc/vlc-3.0.23/": "vlc/"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper",

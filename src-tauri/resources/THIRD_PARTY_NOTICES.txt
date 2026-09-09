@@ -1,16 +1,21 @@
 PixVault for Windows - Third-party notices
 ===========================================
 
-Optional compatibility video playback engine (downloaded on first use)
-FFmpeg n8.1.2-50-g1a748fe2cd, BtbN win64 LGPL shared build, 2026-08-31.
-Project: https://ffmpeg.org/
-Build and source recipes: https://github.com/BtbN/FFmpeg-Builds
-Source: https://github.com/FFmpeg/FFmpeg/tree/1a748fe2cd
-Upstream download: https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-31-13-27
-License: LGPL (full license texts and build notices are retained alongside the
-downloaded engine). Invoked as an independent executable; not linked to PixVault.
-The engine is downloaded directly from upstream over HTTPS and SHA-256 verified.
-Video files remain on the user's computer and are not uploaded.
+Bundled direct video playback: libVLC 3.0.23 for Windows x64
+Project: https://www.videolan.org/vlc/libvlc.html
+Unmodified upstream DLLs/plugins: https://download.videolan.org/pub/videolan/vlc/3.0.23/win64/vlc-3.0.23-win64.zip
+SHA-256: 992d19dbd0b8a7cde9167d2f7780b1ef6f92acc8a71acfa736101a21f35181e1
+libVLC/libVLCcore embedding libraries: LGPL-2.1-or-later (vlc/COPYING.LIB).
+VLC distribution and applicable plugins: GPL-2.0-or-later (vlc/COPYING.txt).
+Upstream authors, acknowledgments, licenses and directory layout are retained.
+Corresponding VLC source (also attached to this PixVault release):
+https://download.videolan.org/pub/videolan/vlc/3.0.23/vlc-3.0.23.tar.xz
+Source SHA-256: e891cae6aa3ccda69bf94173d5105cbc55c7a7d9b1d21b9b21666e69eff3e7e0
+Dependency source recipes/checksums: contrib/src in that source archive.
+Upstream dependency source mirror: https://download.videolan.org/pub/contrib/
+PixVault loads the library dynamically. The library and modules can be replaced
+with compatible builds. No restriction is imposed on debugging modifications to
+these libraries. PixVault does not launch VLC's GUI or modify/upload source videos.
 
 gifenc 1.0.3
 Project: https://github.com/mattdesl/gifenc
