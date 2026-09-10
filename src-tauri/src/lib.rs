@@ -20,6 +20,7 @@ mod tag_translations;
 mod thumbnail_cache;
 mod video_decode;
 mod vlc_playback;
+mod vlc_surface;
 mod web_search;
 mod windows_notifications;
 mod x_downloader;
@@ -4494,7 +4495,8 @@ pub fn run() {
             take_pending_external_media,
             vlc_playback::open_vlc_player,
             vlc_playback::read_vlc_status,
-            vlc_playback::read_vlc_frame,
+            vlc_playback::set_vlc_surface,
+            vlc_playback::capture_vlc_frame,
             vlc_playback::control_vlc_player,
             vlc_playback::close_vlc_player,
             show_windows_notification,

@@ -58,7 +58,7 @@ function installFixture() {
   // errors from its placeholder SVG. Explicit failure tests live separately.
   document.addEventListener('error',e=>{if(e.isTrusted&&e.target instanceof HTMLMediaElement)e.stopImmediatePropagation()},true);
   const svg = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="gray"/></svg>');
-  const state = window.__fixture = {unexpected:[], calls:[], playCalls:0, pauseCalls:0,
+  const state = window.__fixture = {unexpected:[], calls:[], playCalls:0, pauseCalls:0, callbacks:{}, listeners:{}, callbackId:0,
     playback:{state:'playing',message:'',time:60,duration:120,width:640,height:360,volume:.5,muted:false,autoReduced:false}};
   state.makeItem = (i, kind='video') => ({id:`${kind==='archive'?'book':'video'}-${i}`,rootId:'fixture-root',
     relativePath:`${['1','10','2'][i]}.${kind==='archive'?'zip':'webm'}`,path:`E:/Fixture/${['1','10','2'][i]}.${kind==='archive'?'zip':'webm'}`,
@@ -75,12 +75,14 @@ function installFixture() {
   });
   HTMLMediaElement.prototype.play = function(){state.playCalls++;paused.set(this,false);this.dispatchEvent(new Event('play'));return Promise.resolve()};
   HTMLMediaElement.prototype.pause = function(){state.pauseCalls++;paused.set(this,true);this.dispatchEvent(new Event('pause'))};
-  window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
-  window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:event=>{delete state.listeners[event]}};
+  window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:callback=>{const id=++state.callbackId;state.callbacks[id]=callback;return id},
     convertFileSrc:()=>svg,invoke:async(command,args={})=>{
       state.calls.push({command,args});
       if(command==='open_vlc_player'){state.playCalls++;return 'viewer-job';}
       if(command==='close_vlc_player')return null;
+      if(command==='set_vlc_surface')return null;
+      if(command==='capture_vlc_frame')return new ArrayBuffer(0);
       if(command==='read_vlc_status')return {...state.playback};
       if(command==='read_vlc_frame'){
         if(args.after===1)return new ArrayBuffer(0);
@@ -96,6 +98,7 @@ function installFixture() {
         if(control.type==='initialVolume')state.playback.volume=state.playback.autoReduced?Math.min(.5,control.volume):control.volume;
         return null;
       }
+      if(command==='plugin:event|listen'){state.listeners[args.event]=state.callbacks[args.handler];return 1;}
       if(command.startsWith('plugin:event|'))return 1;
       if(command==='plugin:window|is_fullscreen')return false;
       if(command==='plugin:window|set_theme'||command==='set_preference')return null;
@@ -186,6 +189,17 @@ try {
   const time=()=>page.evaluate(()=>window.__fixture.playback.time);
   const reset=async()=>{await page.evaluate(()=>window.__fixture.playback.time=60);await page.waitForTimeout(500)};
   const bounds=await surface.boundingBox();
+  await page.waitForFunction(()=>window.__fixture.listeners['pixvault://vlc-input/viewer-job']);
+  await page.evaluate(async()=>{
+    const rect=document.querySelector('.pv-video-surface').getBoundingClientRect();
+    const send=window.__fixture.listeners['pixvault://vlc-input/viewer-job'];
+    const x=(rect.x+rect.width*.8)*devicePixelRatio,y=(rect.y+rect.height*.5)*devicePixelRatio;
+    const tap=()=>{send({payload:{kind:'pointerdown',x,y,buttons:1,delta:0}});send({payload:{kind:'pointerup',x,y,buttons:0,delta:0}})};
+    tap();await new Promise(resolve=>setTimeout(resolve,150));tap();
+  });
+  await page.waitForFunction(()=>window.__fixture.playback.time===70);
+  assert.equal(await time(),70,'native HWND input bridge reaches actual React double-tap seek');
+  await reset();
   await surface.dblclick({position:{x:bounds.width*.8,y:bounds.height*.5}});
   const mouseTime=await time();await reset();
   // Reproduce WebViews which don't deliver a compatibility dblclick for touch.

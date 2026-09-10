@@ -14,3 +14,7 @@ for (const [codec, container] of [['mpeg4', 'avi'], ['ffv1', 'mkv'], ['wmv2', 'w
         throw new Error(`Cannot generate ${codec} fixture`);
 }
 console.log(`Generated five synthetic codec/container fixtures: ${root}`);
+if (process.argv.includes('--performance')) {
+    const result = spawnSync(ffmpeg, ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=60', '-t', '8', '-an', '-c:v', 'libopenh264', '-b:v', '10M', resolve(root, '../vlc-perf-1080p60.mp4')], { stdio: 'inherit', windowsHide: true });
+    if (result.status !== 0) throw new Error('Cannot generate synthetic performance fixture');
+}

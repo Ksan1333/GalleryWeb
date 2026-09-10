@@ -1025,8 +1025,7 @@ function canvasDataUrl(
   mimeType: "image/png" | "image/jpeg" = "image/png",
 ): string {
   if (source instanceof VlcVideoHandle) {
-    if (source.readyState < 2) throw new Error("動画をまだ描画できません。");
-    return source.canvas.toDataURL(mimeType, mimeType === "image/jpeg" ? 0.92 : undefined);
+    throw new Error("ネイティブ動画のキャプチャは非同期で取得してください。");
   }
   const width = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
   const height = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
@@ -2220,19 +2219,24 @@ function VideoViewer({
 
   useEffect(() => {
     if (!seeking || !playback.native) return;
-    let frame: number;
-    const draw = () => {
-      const source = nativeCanvasRef.current, preview = nativePreviewRef.current;
-      if (source && preview && source.width && source.height) {
-        preview.width = 160; preview.height = Math.max(1, Math.round(160 * source.height / source.width));
-        preview.getContext("2d")?.drawImage(source, 0, 0, preview.width, preview.height);
-      }
-      frame = requestAnimationFrame(draw);
-    };
-    frame = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(frame);
-  }, [seeking, playback.native]);
-
+    let active = true;
+    const timer = window.setTimeout(() => {
+      const player = videoRef.current;
+      if (!(player instanceof VlcVideoHandle)) return;
+      void player.capture(320).then(source => {
+        if (!active) return;
+        const image = new Image();
+        image.onload = () => {
+          const preview = nativePreviewRef.current;
+          if (!active || !preview) return;
+          preview.width = image.naturalWidth; preview.height = image.naturalHeight;
+          preview.getContext("2d")?.drawImage(image, 0, 0);
+        };
+        image.src = source;
+      }).catch(() => undefined);
+    }, 220);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [seeking, playback.native, previewTime, videoRef]);
   useEffect(() => {
     if (!seeking || !previewRef.current || !Number.isFinite(previewRef.current.duration)) return;
     previewRef.current.currentTime = Math.min(previewTime, previewRef.current.duration || previewTime);
@@ -2450,7 +2454,7 @@ function VideoViewer({
       return;
     }
     surfacePress.current = { id: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now() };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    if (event.isTrusted) event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
   const handleSurfacePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -3955,8 +3959,12 @@ export function MediaViewer({
   });
 
   const recycle = () => {
-    if (!window.confirm(`「${item.name}」をWindowsのごみ箱へ移動しますか？`)) return;
     void runAction("recycle", async () => {
+      const prompt = `「${item.name}」をWindowsのごみ箱へ移動しますか？`;
+      const confirmed = videoRef.current instanceof VlcVideoHandle
+        ? await videoRef.current.confirm(prompt)
+        : window.confirm(prompt);
+      if (!confirmed) return;
       let nextCollectionIndex: number | undefined;
       let nextItem: MediaItem | undefined;
       if (collection && activeCollectionIndex >= 0 && collectionTotalCount > 1) {
@@ -4013,7 +4021,9 @@ export function MediaViewer({
     let dataUrl: string;
     if (item.kind === "video") {
       if (!videoRef.current) throw new Error("動画をまだ読み込んでいます。");
-      dataUrl = canvasDataUrl(videoRef.current);
+      dataUrl = videoRef.current instanceof VlcVideoHandle
+        ? await videoRef.current.capture()
+        : canvasDataUrl(videoRef.current);
     } else if (isBook) {
       dataUrl = canvasesDataUrl(bookCanvasRefs.current.filter((canvas): canvas is HTMLCanvasElement => Boolean(canvas)));
     } else {

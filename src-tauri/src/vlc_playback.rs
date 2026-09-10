@@ -1,10 +1,12 @@
 //! Direct libVLC playback. No transcoder, generated movie or engine downloader.
-//! A bounded latest-frame mailbox feeds WebGL through binary IPC; the browser
-//! owns controls/overlays, so native child windows cannot cover dialogs or input.
+//! Direct3D window output keeps decoded frames on the native rendering path.
+//! No continuous pixel readback, frame polling or WebGL upload in production.
+use crate::vlc_surface::{Layout as SurfaceLayout, Surface};
 use crate::{catalog, db::AppState};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::{
-    alloc::{Layout, alloc_zeroed, dealloc},
     collections::HashMap,
     ffi::{CString, c_char, c_int, c_uint, c_void},
     path::Path,
@@ -16,11 +18,14 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 type Handle = *mut c_void;
+#[cfg(test)]
 type LockCb = unsafe extern "C" fn(Handle, *mut Handle) -> Handle;
+#[cfg(test)]
 type DisplayCb = unsafe extern "C" fn(Handle, Handle);
+#[cfg(test)]
 type FormatCb = unsafe extern "C" fn(
     *mut Handle,
     *mut c_char,
@@ -31,7 +36,29 @@ type FormatCb = unsafe extern "C" fn(
 ) -> c_uint;
 type AudioCb = unsafe extern "C" fn(Handle, *const c_void, c_uint, i64);
 
+#[derive(Default)]
+#[repr(C)]
+struct MediaStats {
+    read_bytes: i32,
+    input_bitrate: f32,
+    demux_bytes: i32,
+    demux_bitrate: f32,
+    corrupted: i32,
+    discontinuities: i32,
+    decoded_video: i32,
+    decoded_audio: i32,
+    displayed: i32,
+    lost: i32,
+    played_audio: i32,
+    lost_audio: i32,
+    sent_packets: i32,
+    sent_bytes: i32,
+    send_bitrate: f32,
+}
+
 struct Api {
+    get_media: unsafe extern "C" fn(Handle) -> Handle,
+    get_stats: unsafe extern "C" fn(Handle, *mut MediaStats) -> c_int,
     new: unsafe extern "C" fn(c_int, *const *const c_char) -> Handle,
     media_new_path: unsafe extern "C" fn(Handle, *const c_char) -> Handle,
     media_add_option: unsafe extern "C" fn(Handle, *const c_char),
@@ -48,6 +75,12 @@ struct Api {
     get_state: unsafe extern "C" fn(Handle) -> c_int,
     set_volume: unsafe extern "C" fn(Handle, c_int) -> c_int,
     set_mute: unsafe extern "C" fn(Handle, c_int),
+    set_hwnd: unsafe extern "C" fn(Handle, Handle),
+    mouse_input: unsafe extern "C" fn(Handle, c_uint),
+    key_input: unsafe extern "C" fn(Handle, c_uint),
+    video_size: unsafe extern "C" fn(Handle, c_uint, *mut c_uint, *mut c_uint) -> c_int,
+    snapshot: unsafe extern "C" fn(Handle, c_uint, *const c_char, c_uint, c_uint) -> c_int,
+    #[cfg(test)]
     video_callbacks: unsafe extern "C" fn(
         Handle,
         Option<LockCb>,
@@ -55,6 +88,7 @@ struct Api {
         Option<DisplayCb>,
         Handle,
     ),
+    #[cfg(test)]
     video_format:
         unsafe extern "C" fn(Handle, Option<FormatCb>, Option<unsafe extern "C" fn(Handle)>),
     audio_callbacks: unsafe extern "C" fn(
@@ -117,6 +151,8 @@ impl Api {
                 }};
             }
             let mut api = Self {
+                get_media: symbol!("libvlc_media_player_get_media"),
+                get_stats: symbol!("libvlc_media_get_stats"),
                 new: symbol!("libvlc_new"),
                 media_new_path: symbol!("libvlc_media_new_path"),
                 media_add_option: symbol!("libvlc_media_add_option"),
@@ -133,7 +169,14 @@ impl Api {
                 get_state: symbol!("libvlc_media_player_get_state"),
                 set_volume: symbol!("libvlc_audio_set_volume"),
                 set_mute: symbol!("libvlc_audio_set_mute"),
+                set_hwnd: symbol!("libvlc_media_player_set_hwnd"),
+                mouse_input: symbol!("libvlc_video_set_mouse_input"),
+                key_input: symbol!("libvlc_video_set_key_input"),
+                video_size: symbol!("libvlc_video_get_size"),
+                snapshot: symbol!("libvlc_video_take_snapshot"),
+                #[cfg(test)]
                 video_callbacks: symbol!("libvlc_video_set_callbacks"),
+                #[cfg(test)]
                 video_format: symbol!("libvlc_video_set_format_callbacks"),
                 audio_callbacks: symbol!("libvlc_audio_set_callbacks"),
                 audio_format: symbol!("libvlc_audio_set_format"),
@@ -148,7 +191,10 @@ impl Api {
                 "--no-media-library",
                 "--no-snapshot-preview",
                 "--quiet",
-                "--avcodec-threads=2",
+                "--avcodec-threads=0",
+                "--avcodec-hw=any",
+                "--vout=direct3d11,any",
+                "--mouse-hide-timeout=2147483647",
                 "--file-caching=300",
             ];
             let args: Vec<CString> = options
@@ -180,6 +226,7 @@ pub(crate) fn probe_runtime(directory: &Path) -> Result<(), String> {
 // libVLC requires 32-byte aligned planes. Buffers return to the small pool only
 // after its presentation-clock callback; a slow renderer drops old frames, never
 // queues them. Original pixels and display pixels have distinct dimensions.
+#[cfg(test)]
 struct Picture {
     data: *mut u8,
     layout: Layout,
@@ -187,7 +234,9 @@ struct Picture {
     height: u32,
     pitch: u32,
 }
+#[cfg(test)]
 unsafe impl Send for Picture {}
+#[cfg(test)]
 impl Picture {
     fn new(width: u32, height: u32) -> Option<Self> {
         let pitch = (width * 4).div_ceil(32) * 32;
@@ -206,6 +255,7 @@ impl Picture {
         })
     }
 }
+#[cfg(test)]
 impl Drop for Picture {
     fn drop(&mut self) {
         unsafe {
@@ -214,6 +264,7 @@ impl Drop for Picture {
     }
 }
 #[derive(Default)]
+#[cfg(test)]
 struct Frames {
     dimensions: (u32, u32),
     original: (u32, u32),
@@ -223,9 +274,11 @@ struct Frames {
     sequence: u32,
 }
 #[derive(Default)]
+#[cfg(test)]
 struct Sink {
     frames: Mutex<Frames>,
 }
+#[cfg(test)]
 fn display_dimensions(width: u32, height: u32) -> Option<(u32, u32)> {
     if width == 0 || height == 0 || width > 32_768 || height > 32_768 {
         return None;
@@ -236,6 +289,7 @@ fn display_dimensions(width: u32, height: u32) -> Option<(u32, u32)> {
         (height as f64 * scale).round().max(1.0) as u32,
     ))
 }
+#[cfg(test)]
 unsafe extern "C" fn format(
     opaque: *mut Handle,
     chroma: *mut c_char,
@@ -265,6 +319,7 @@ unsafe extern "C" fn format(
         3
     }
 }
+#[cfg(test)]
 unsafe extern "C" fn lock(opaque: Handle, planes: *mut Handle) -> Handle {
     unsafe {
         let sink = &*(opaque as *const Sink);
@@ -290,6 +345,7 @@ unsafe extern "C" fn lock(opaque: Handle, planes: *mut Handle) -> Handle {
         id as Handle
     }
 }
+#[cfg(test)]
 unsafe extern "C" fn display(opaque: Handle, picture: Handle) {
     if picture.is_null() {
         return;
@@ -309,6 +365,7 @@ unsafe extern "C" fn display(opaque: Handle, picture: Handle) {
         }
     }
 }
+#[cfg(test)]
 fn frame_packet(sink: &Sink, after: u32) -> Vec<u8> {
     let Ok(frames) = sink.frames.lock() else {
         return Vec::new();
@@ -369,8 +426,15 @@ unsafe extern "C" fn audio_sample(opaque: Handle, samples: *const c_void, count:
 struct Player {
     api: Arc<Api>,
     raw: Handle,
+    #[cfg(test)]
     _sink: Option<Arc<Sink>>,
     _audio: Option<Box<Mutex<AudioLevel>>>,
+}
+enum Output {
+    Native(usize),
+    Audio,
+    #[cfg(test)]
+    Software(Arc<Sink>),
 }
 fn vlc_path_text(source: &Path) -> Result<String, String> {
     let value = source
@@ -393,12 +457,7 @@ fn vlc_path(source: &Path) -> Result<CString, String> {
     CString::new(vlc_path_text(source)?).map_err(|e| e.to_string())
 }
 impl Player {
-    fn open(
-        api: Arc<Api>,
-        source: &Path,
-        sink: Option<Arc<Sink>>,
-        silent: bool,
-    ) -> Result<Self, String> {
+    fn open(api: Arc<Api>, source: &Path, output: Output, silent: bool) -> Result<Self, String> {
         let path = vlc_path(source)?;
         unsafe {
             let media = (api.media_new_path)(api.instance as Handle, path.as_ptr());
@@ -425,32 +484,45 @@ impl Player {
             let mut player = Self {
                 api: api.clone(),
                 raw,
-                _sink: sink,
+                #[cfg(test)]
+                _sink: None,
                 _audio: None,
             };
-            if let Some(sink) = &player._sink {
-                (api.video_callbacks)(
-                    raw,
-                    Some(lock),
-                    None,
-                    Some(display),
-                    Arc::as_ptr(sink) as Handle,
-                );
-                (api.video_format)(raw, Some(format), None);
-            } else {
-                (api.media_add_option)(media, c":no-video".as_ptr());
-                let audio = Box::new(Mutex::new(AudioLevel::default()));
-                (api.audio_callbacks)(
-                    raw,
-                    Some(audio_sample),
-                    None,
-                    None,
-                    None,
-                    None,
-                    &*audio as *const _ as Handle,
-                );
-                (api.audio_format)(raw, c"FL32".as_ptr(), 48_000, 1);
-                player._audio = Some(audio);
+            match output {
+                Output::Native(hwnd) => {
+                    // Never call video_set_callbacks here: VLC 3 disables hardware
+                    // decoding when that API is used, even with --avcodec-hw=any.
+                    (api.set_hwnd)(raw, hwnd as Handle);
+                    (api.mouse_input)(raw, 0);
+                    (api.key_input)(raw, 0);
+                }
+                #[cfg(test)]
+                Output::Software(sink) => {
+                    (api.video_callbacks)(
+                        raw,
+                        Some(lock),
+                        None,
+                        Some(display),
+                        Arc::as_ptr(&sink) as Handle,
+                    );
+                    (api.video_format)(raw, Some(format), None);
+                    player._sink = Some(sink);
+                }
+                Output::Audio => {
+                    (api.media_add_option)(media, c":no-video".as_ptr());
+                    let audio = Box::new(Mutex::new(AudioLevel::default()));
+                    (api.audio_callbacks)(
+                        raw,
+                        Some(audio_sample),
+                        None,
+                        None,
+                        None,
+                        None,
+                        &*audio as *const _ as Handle,
+                    );
+                    (api.audio_format)(raw, c"FL32".as_ptr(), 48_000, 1);
+                    player._audio = Some(audio);
+                }
             }
             (api.set_media)(raw, media);
             (api.media_release)(media);
@@ -513,16 +585,30 @@ impl Default for Status {
 pub enum Control {
     Play,
     Pause,
-    Seek { time: f64 },
-    Volume { volume: f64, muted: bool },
-    InitialVolume { volume: f64 },
-    Loop { enabled: bool },
+    Seek {
+        time: f64,
+    },
+    Volume {
+        volume: f64,
+        muted: bool,
+    },
+    InitialVolume {
+        volume: f64,
+    },
+    Loop {
+        enabled: bool,
+    },
+    #[serde(skip)]
+    Capture {
+        width: u32,
+        reply: mpsc::Sender<Result<Vec<u8>, String>>,
+    },
 }
 struct Session {
     cancelled: AtomicBool,
     finished: AtomicBool,
     status: Mutex<Status>,
-    sink: Arc<Sink>,
+    surface: Arc<Surface>,
     sender: mpsc::Sender<Control>,
 }
 static SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Session>>>> = OnceLock::new();
@@ -539,8 +625,23 @@ fn session(id: &str) -> Result<Arc<Session>, String> {
 }
 
 #[tauri::command]
-pub fn open_vlc_player(
-    app: tauri::AppHandle,
+pub async fn open_vlc_player(
+    window: tauri::WebviewWindow,
+    media_id: String,
+    volume: f64,
+    muted: bool,
+    looped: bool,
+) -> Result<String, String> {
+    // Creating a cross-thread child HWND sends messages to its parent. Never
+    // block the WebView/UI thread waiting for the surface's message loop.
+    tauri::async_runtime::spawn_blocking(move || {
+        create_session(window, media_id, volume, muted, looped)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+fn create_session(
+    window: tauri::WebviewWindow,
     media_id: String,
     volume: f64,
     muted: bool,
@@ -549,24 +650,37 @@ pub fn open_vlc_player(
     if !volume.is_finite() {
         return Err("音量が不正です。".into());
     }
+    let app = window.app_handle().clone();
     let directory = app
         .path()
         .resource_dir()
         .map_err(|e| e.to_string())?
         .join("vlc");
     let (sender, receiver) = mpsc::channel();
+    let id = uuid::Uuid::new_v4().to_string();
+    #[cfg(windows)]
+    let parent = window.hwnd().map_err(|e| e.to_string())?.0 as usize;
+    #[cfg(not(windows))]
+    let parent = 0;
+    let event_name = format!("pixvault://vlc-input/{id}");
+    let surface = Arc::new(Surface::new(
+        parent,
+        Arc::new(move |input| {
+            let _ = window.emit(&event_name, input);
+        }),
+    )?);
     let session = Arc::new(Session {
         cancelled: AtomicBool::new(false),
         finished: AtomicBool::new(false),
         status: Mutex::new(Status::default()),
-        sink: Arc::new(Sink::default()),
+        surface,
         sender,
     });
-    let id = uuid::Uuid::new_v4().to_string();
     {
         let mut active = sessions().lock().map_err(|e| e.to_string())?;
         for old in active.values() {
             old.cancelled.store(true, Ordering::Relaxed);
+            let _ = old.surface.update(SurfaceLayout::default());
         }
         // Keep draining sessions addressable until close can await their file
         // handles. A delayed close must not accidentally close a newer session.
@@ -603,6 +717,7 @@ pub fn open_vlc_player(
                 status.message = error;
             }
         }
+        session.surface.close();
         session.finished.store(true, Ordering::Release);
     });
     Ok(id)
@@ -616,8 +731,13 @@ fn playback_worker(
     initial_muted: bool,
     mut looped: bool,
 ) -> Result<(), String> {
-    let player = Player::open(api.clone(), path, Some(session.sink.clone()), false)?;
-    let mut analysis = Player::open(api.clone(), path, None, false).ok();
+    let player = Player::open(
+        api.clone(),
+        path,
+        Output::Native(session.surface.video),
+        false,
+    )?;
+    let mut analysis = Player::open(api.clone(), path, Output::Audio, false).ok();
     let mut volume = initial_volume.min(0.5);
     let mut muted = initial_muted;
     let mut touched = false;
@@ -678,6 +798,9 @@ fn playback_worker(
                     }
                 }
                 Control::Loop { enabled } => looped = enabled,
+                Control::Capture { width, reply } => {
+                    let _ = reply.send(snapshot(&player, width));
+                }
             }
         }
         let state = unsafe { (api.get_state)(player.raw) };
@@ -726,14 +849,19 @@ fn playback_worker(
             analysis = None;
             analysis_done = true;
         }
-        let (width, height, has_frame) = {
-            let frames = session.sink.frames.lock().map_err(|e| e.to_string())?;
-            (
-                frames.original.0,
-                frames.original.1,
-                frames.latest.is_some(),
-            )
-        };
+        let (mut width, mut height) = (0, 0);
+        unsafe {
+            (api.video_size)(player.raw, 0, &mut width, &mut height);
+        }
+        let mut stats = MediaStats::default();
+        unsafe {
+            let media = (api.get_media)(player.raw);
+            if !media.is_null() {
+                (api.get_stats)(media, &mut stats);
+                (api.media_release)(media);
+            }
+        }
+        let has_frame = width > 0 && height > 0 && stats.displayed > 0;
         if !has_frame && started.elapsed() > Duration::from_secs(30) {
             return Err(
                 "映像を取得できませんでした。再試行するか、別の動画を開いてください。".into(),
@@ -784,16 +912,72 @@ pub fn read_vlc_status(session_id: String) -> Result<Status, String> {
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
-pub async fn read_vlc_frame(
-    session_id: String,
-    after: u32,
-) -> Result<tauri::ipc::Response, String> {
+pub fn set_vlc_surface(session_id: String, layout: SurfaceLayout) -> Result<(), String> {
     let session = session(&session_id)?;
+    if session.cancelled.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    session.surface.update(layout)
+}
+
+fn snapshot(player: &Player, width: u32) -> Result<Vec<u8>, String> {
+    struct Temporary(std::path::PathBuf);
+    impl Drop for Temporary {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(self.0.join("frame.png"));
+            let _ = std::fs::remove_dir(&self.0);
+        }
+    }
+    let temporary =
+        Temporary(std::env::temp_dir().join(format!("pixvault-frame-{}", uuid::Uuid::new_v4())));
+    std::fs::create_dir(&temporary.0).map_err(|e| e.to_string())?;
+    let filename = temporary.0.join("frame.png");
+    let path = vlc_path(&filename)?;
+    let (mut source_width, mut source_height) = (0, 0);
+    unsafe {
+        (player.api.video_size)(player.raw, 0, &mut source_width, &mut source_height);
+    }
+    let width = if width == 0 {
+        source_width.clamp(1, 3840)
+    } else {
+        width
+    };
+    if unsafe { (player.api.snapshot)(player.raw, 0, path.as_ptr(), width, 0) } != 0 {
+        return Err("動画フレームを取得できませんでした。".into());
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        if let Ok(bytes) = std::fs::read(&filename) {
+            if image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).is_ok() {
+                return Ok(bytes);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    Err("動画フレームの取得がタイムアウトしました。".into())
+}
+#[tauri::command]
+pub async fn capture_vlc_frame(
+    session_id: String,
+    width: u32,
+) -> Result<tauri::ipc::Response, String> {
+    if width > 3840 {
+        return Err("画像サイズが不正です。".into());
+    }
+    let session = session(&session_id)?;
+    let (reply, receiver) = mpsc::channel();
+    session
+        .sender
+        .send(Control::Capture { width, reply })
+        .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        tauri::ipc::Response::new(frame_packet(&session.sink, after))
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|e| e.to_string())?
+            .map(tauri::ipc::Response::new)
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub fn control_vlc_player(session_id: String, control: Control) -> Result<(), String> {
@@ -818,6 +1002,7 @@ pub async fn close_vlc_player(session_id: String) -> Result<(), String> {
         return Ok(());
     };
     session.cancelled.store(true, Ordering::Relaxed);
+    let _ = session.surface.update(SurfaceLayout::default());
     // In particular, deleting a playing video must await release of its file
     // handle. Never block the webview's UI thread while VLC drains playback.
     tauri::async_runtime::spawn_blocking(move || {
@@ -838,6 +1023,157 @@ pub async fn close_vlc_player(session_id: String) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires bundled VLC and the synthetic 1080p60 fixture"]
+    fn native_gpu_performance_probe() {
+        use windows_sys::Win32::{
+            Foundation::FILETIME,
+            System::Threading::{GetCurrentProcess, GetProcessTimes},
+        };
+        let cpu = || unsafe {
+            let mut times = [FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            }; 4];
+            assert_ne!(
+                GetProcessTimes(
+                    GetCurrentProcess(),
+                    &mut times[0],
+                    &mut times[1],
+                    &mut times[2],
+                    &mut times[3]
+                ),
+                0
+            );
+            times[2..]
+                .iter()
+                .map(|time| {
+                    ((time.dwHighDateTime as u64) << 32 | time.dwLowDateTime as u64) as f64
+                        / 10_000_000.0
+                })
+                .sum::<f64>()
+        };
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target");
+        let api = engine(&root.join("libvlc/vlc-3.0.23").canonicalize().unwrap()).unwrap();
+        let path = root.join("vlc-perf-1080p60.mp4");
+        for native in [false, true] {
+            let surface = Surface::new(0, Arc::new(|_| {})).unwrap();
+            let sink = Arc::new(Sink::default());
+            let output = if native {
+                Output::Native(surface.video)
+            } else {
+                Output::Software(sink.clone())
+            };
+            let player = Player::open(api.clone(), &path, output, true).unwrap();
+            let initial_cpu = cpu();
+            let started = Instant::now();
+            player.play().unwrap();
+            let mut copied = 0_u64;
+            let mut sequence = 0;
+            let mut stats = MediaStats::default();
+            while started.elapsed() < Duration::from_secs(7) {
+                if !native {
+                    let packet = frame_packet(&sink, sequence);
+                    if packet.len() >= 24 {
+                        sequence = u32::from_le_bytes(packet[12..16].try_into().unwrap());
+                        copied += packet.len() as u64;
+                    }
+                }
+                unsafe {
+                    let media = (api.get_media)(player.raw);
+                    assert!(!media.is_null());
+                    (api.get_stats)(media, &mut stats);
+                    (api.media_release)(media);
+                }
+                std::thread::sleep(Duration::from_millis(16));
+            }
+            let cpu_used = cpu() - initial_cpu;
+            println!(
+                "PERF native={native} wall={:.3}s cpu={cpu_used:.3}s decoded={} displayed={} lost={} copied_bytes={copied}",
+                started.elapsed().as_secs_f64(),
+                stats.decoded_video,
+                stats.displayed,
+                stats.lost
+            );
+            assert!(stats.decoded_video > 300);
+            assert!(stats.displayed > 250);
+            if native {
+                assert_eq!(copied, 0);
+                unsafe {
+                    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+                    for module in ["libdirect3d11_plugin.dll", "libd3d11va_plugin.dll"] {
+                        let name: Vec<u16> = module.encode_utf16().chain(Some(0)).collect();
+                        println!(
+                            "NATIVE MODULE {module}: {}",
+                            !GetModuleHandleW(name.as_ptr()).is_null()
+                        );
+                    }
+                }
+                let capture = snapshot(&player, 320).unwrap();
+                assert!(image::load_from_memory(&capture).is_ok());
+                println!(
+                    "PASS native on-demand PNG snapshot, {} bytes",
+                    capture.len()
+                );
+            }
+            drop(player);
+            surface.close();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires verified bundle and synthetic fixtures"]
+    fn native_window_decodes_five_formats() {
+        let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/libvlc/vlc-3.0.23");
+        let api = engine(&directory.canonicalize().unwrap()).unwrap();
+        let fixtures = PathBuf::from(std::env::var("PIXVAULT_VLC_FIXTURES").unwrap());
+        let surface = Surface::new(0, Arc::new(|_| {})).unwrap();
+        let mut count = 0;
+        for entry in std::fs::read_dir(fixtures).unwrap().flatten() {
+            let path = entry.path();
+            let original = std::fs::read(&path).unwrap();
+            let player = Player::open(
+                api.clone(),
+                &path.canonicalize().unwrap(),
+                Output::Native(surface.video),
+                true,
+            )
+            .unwrap();
+            player.play().unwrap();
+            let start = Instant::now();
+            loop {
+                let (mut w, mut h) = (0, 0);
+                let mut stats = MediaStats::default();
+                unsafe {
+                    (api.video_size)(player.raw, 0, &mut w, &mut h);
+                    let media = (api.get_media)(player.raw);
+                    if !media.is_null() {
+                        (api.get_stats)(media, &mut stats);
+                        (api.media_release)(media);
+                    }
+                }
+                if w > 0 && h > 0 && stats.displayed > 0 {
+                    break;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(10),
+                    "native video {}",
+                    path.display()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let bytes = snapshot(&player, 160)
+                .unwrap_or_else(|error| panic!("snapshot {}: {error}", path.display()));
+            assert!(image::load_from_memory(&bytes).is_ok());
+            drop(player);
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            count += 1;
+        }
+        assert_eq!(count, 5);
+        surface.close();
+    }
     #[test]
     fn windows_canonical_paths_remain_local_or_unc() {
         for (input, expected) in [
@@ -944,7 +1280,7 @@ mod tests {
             let player = Player::open(
                 api.clone(),
                 &path.canonicalize().unwrap(),
-                Some(sink.clone()),
+                Output::Software(sink.clone()),
                 true,
             )
             .unwrap();
@@ -967,7 +1303,7 @@ mod tests {
             drop(player);
             // Decode audio to a sample callback: test normalization without
             // producing sound or opening an OS audio/video window.
-            let audio = Player::open(api.clone(), &path, None, false).unwrap();
+            let audio = Player::open(api.clone(), &path, Output::Audio, false).unwrap();
             audio.play().unwrap();
             let audio_started = Instant::now();
             while audio._audio.as_ref().unwrap().lock().unwrap().samples < 38_400 {
@@ -1002,7 +1338,7 @@ mod tests {
             cancelled: AtomicBool::new(false),
             finished: AtomicBool::new(false),
             status: Mutex::new(Status::default()),
-            sink: Arc::new(Sink::default()),
+            surface: Arc::new(Surface::new(0, Arc::new(|_| {})).unwrap()),
             sender,
         });
         let id = uuid::Uuid::new_v4().to_string();
@@ -1022,6 +1358,7 @@ mod tests {
                 false,
                 true,
             );
+            worker_session.surface.close();
             worker_session.finished.store(true, Ordering::Release);
             result
         });

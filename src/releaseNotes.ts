@@ -11,6 +11,16 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.4.0",
+    date: "2026-09-10",
+    title: "動画をGPUで直接描画",
+    changes: [
+      "Windowsの動画表示をlibVLCのDirect3D描画へ変更し、通常再生時の大量の画像転送とWebGL再アップロードを廃止",
+      "GPU動画デコードを有効にし、対応しない形式はソフトウェアデコードへ自動切り替え",
+      "既存のシーク・音量・削除後の次動画表示を維持し、キャプチャとプレビューは必要時のみ取得",
+    ],
+  },
+  {
     version: "0.3.1",
     date: "2026-09-10",
     title: "libVLC初期化エラーの修正",
