@@ -94,8 +94,8 @@ function installFixture() {
         if(control.type==='seek')state.playback.time=control.time;
         if(control.type==='pause'){state.pauseCalls++;state.playback.state='paused';}
         if(control.type==='play'){state.playCalls++;state.playback.state='playing';}
-        if(control.type==='volume'){state.playback.volume=control.volume;state.playback.muted=control.muted;}
-        if(control.type==='initialVolume')state.playback.volume=state.playback.autoReduced?Math.min(.5,control.volume):control.volume;
+        if(control.type==='volume'){state.volumeTouched=true;state.playback.volume=control.volume;state.playback.muted=control.muted;}
+        if(control.type==='initialVolume'&&!state.volumeTouched)state.playback.volume=state.playback.autoReduced?Math.min(state.playback.volume,control.volume*.4):control.volume;
         return null;
       }
       if(command==='plugin:event|listen'){state.listeners[args.event]=state.callbacks[args.handler];return 1;}
@@ -163,14 +163,22 @@ try {
     'the video gallery and indexed viewer rail share SQL name order');
   await page.evaluate(()=>{
     window.__fixture.playback.autoReduced=true;
+    window.__fixture.playback.volume=.31;
     window.dispatchEvent(new CustomEvent('pixvault:video-playback-settings',{detail:{volume:.9,muted:false,loop:false}}));
   });
-  await page.waitForTimeout(500);
-  assert.equal(await page.evaluate(()=>window.__fixture.playback.volume),.5,'late saved volume cannot override native loudness protection');
+  await page.waitForFunction(()=>document.querySelector('.pv-video-volume input').value==='0.31');
+  assert.equal(await page.evaluate(()=>window.__fixture.playback.volume),.31,'reduced actual volume is not reset to 50% or a late saved value');
   await page.getByRole('button',{name:'ミュート',exact:true}).click();
   await page.waitForTimeout(250);
-  assert.equal(await page.evaluate(()=>window.__fixture.playback.volume),.5,'muting cannot restore the louder saved volume');
+  assert.equal(await page.evaluate(()=>window.__fixture.playback.volume),.31,'muting cannot restore the louder saved volume');
   await page.getByRole('button',{name:'ミュートを解除',exact:true}).click();
+  await page.locator('.pv-video-surface').dispatchEvent('wheel',{deltaY:-120});
+  await page.waitForFunction(()=>Math.abs(window.__fixture.playback.volume-.36)<1e-9);
+  await page.locator('.pv-video-surface').dispatchEvent('wheel',{deltaY:120});
+  await page.waitForFunction(()=>Math.abs(window.__fixture.playback.volume-.31)<1e-9);
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('pixvault:video-playback-settings',{detail:{volume:.8,muted:false,loop:false}})));
+  await page.waitForTimeout(250);
+  assert.ok(Math.abs(await page.evaluate(()=>window.__fixture.playback.volume)-.31)<1e-9,'manual changes remain based on the reduced actual level');
   const samples=await page.evaluate(contrastSamples);
   console.log('LIGHT CONTRAST',JSON.stringify(samples));
   if(!diagnose) {

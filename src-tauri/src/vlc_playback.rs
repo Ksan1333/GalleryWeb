@@ -396,30 +396,103 @@ struct AudioLevel {
     samples: u64,
 }
 impl AudioLevel {
+    fn rms(&self) -> f64 {
+        (self.squares / self.samples.max(1) as f64).sqrt()
+    }
     fn loud(&self) -> bool {
-        let rms = (self.squares / self.samples.max(1) as f64).sqrt();
+        let rms = self.rms();
         rms >= 0.22 || (self.peak >= 0.98 && rms >= 0.12)
+    }
+    fn reduction_gain(&self) -> f64 {
+        if !self.loud() {
+            return 1.0;
+        }
+        // Attenuate only. This is an RMS/peak heuristic, not LUFS mastering.
+        (0.18 / self.rms())
+            .min(0.9 / self.peak as f64)
+            .clamp(0.0, 1.0)
     }
 }
 unsafe extern "C" fn audio_sample(opaque: Handle, samples: *const c_void, count: u32, _: i64) {
+    if opaque.is_null() || samples.is_null() || count == 0 {
+        return;
+    }
     unsafe {
         let level = &*(opaque as *const Mutex<AudioLevel>);
         if let Ok(mut level) = level.lock() {
-            if level.samples >= 384_000 || samples.is_null() {
+            if level.samples >= 384_000 {
                 return;
             }
             let remaining = 384_000 - level.samples as u32;
+            // VLC 3.0.23 amem outputs S16N even if set_format requests FL32.
+            // Mono is explicitly configured below: count is the number of i16
+            // samples, NOT f32 values or bytes. Never read beyond count * 2.
             for &sample in
-                std::slice::from_raw_parts(samples as *const f32, count.min(remaining) as usize)
+                std::slice::from_raw_parts(samples as *const i16, count.min(remaining) as usize)
             {
-                if !sample.is_finite() {
-                    continue;
-                }
-                let value = sample.clamp(-1.0, 1.0);
+                let value = sample as f32 / 32768.0;
                 level.squares += (value as f64).powi(2);
                 level.peak = level.peak.max(value.abs());
                 level.samples += 1;
             }
+        }
+    }
+}
+
+struct PlaybackVolume {
+    initial: f64,
+    value: f64,
+    gain: f64,
+    touched: bool,
+    analysis_done: bool,
+    reduced: bool,
+}
+impl PlaybackVolume {
+    fn new(initial: f64) -> Self {
+        Self {
+            initial,
+            value: initial,
+            gain: 1.0,
+            touched: false,
+            analysis_done: false,
+            reduced: false,
+        }
+    }
+    fn adjusted(&self) -> f64 {
+        if self.gain < 1.0 {
+            // Match native whole-percent volume without rounding upward.
+            (self.initial * self.gain * 100.0).floor() / 100.0
+        } else {
+            self.initial
+        }
+    }
+    fn restore(&mut self, saved: f64) {
+        if self.touched {
+            return;
+        }
+        self.initial = saved.clamp(0.0, 1.0);
+        let next = self.adjusted();
+        // A late preference read may lower, but never undo an applied reduction.
+        self.value = if self.reduced {
+            self.value.min(next)
+        } else {
+            next
+        };
+    }
+    fn manual(&mut self, value: f64) {
+        self.value = value.clamp(0.0, 1.0);
+        self.touched = true;
+    }
+    fn finish_analysis(&mut self, gain: f64) {
+        if self.analysis_done {
+            return;
+        }
+        self.analysis_done = true;
+        self.gain = gain;
+        if !self.touched {
+            let next = self.adjusted();
+            self.reduced = next < self.value;
+            self.value = next;
         }
     }
 }
@@ -520,7 +593,7 @@ impl Player {
                         None,
                         &*audio as *const _ as Handle,
                     );
-                    (api.audio_format)(raw, c"FL32".as_ptr(), 48_000, 1);
+                    (api.audio_format)(raw, c"S16N".as_ptr(), 48_000, 1);
                     player._audio = Some(audio);
                 }
             }
@@ -672,7 +745,11 @@ fn create_session(
     let session = Arc::new(Session {
         cancelled: AtomicBool::new(false),
         finished: AtomicBool::new(false),
-        status: Mutex::new(Status::default()),
+        status: Mutex::new(Status {
+            volume: volume.clamp(0.0, 1.0),
+            muted,
+            ..Status::default()
+        }),
         surface,
         sender,
     });
@@ -727,7 +804,7 @@ fn playback_worker(
     path: &Path,
     session: &Session,
     receiver: mpsc::Receiver<Control>,
-    mut initial_volume: f64,
+    initial_volume: f64,
     initial_muted: bool,
     mut looped: bool,
 ) -> Result<(), String> {
@@ -738,18 +815,15 @@ fn playback_worker(
         false,
     )?;
     let mut analysis = Player::open(api.clone(), path, Output::Audio, false).ok();
-    let mut volume = initial_volume.min(0.5);
+    let mut volume = PlaybackVolume::new(initial_volume);
     let mut muted = initial_muted;
-    let mut touched = false;
-    let mut reduced = false;
-    player.volume(volume, muted);
+    player.volume(volume.value, muted);
     player.play()?;
     if analysis.as_ref().is_some_and(|p| p.play().is_err()) {
         analysis = None;
     }
     let started = Instant::now();
     let mut initialized = false;
-    let mut analysis_done = false;
     let mut prior_state = 0;
     let mut desired_pause = false;
     let mut pending_seek = None;
@@ -781,21 +855,13 @@ fn playback_worker(
                     volume: v,
                     muted: m,
                 } => {
-                    volume = v.clamp(0.0, 1.0);
+                    volume.manual(v);
                     muted = m;
-                    touched = true;
-                    player.volume(volume, muted);
+                    player.volume(volume.value, muted);
                 }
                 Control::InitialVolume { volume: saved } => {
-                    if !touched {
-                        initial_volume = saved.clamp(0.0, 1.0);
-                        volume = if reduced || !analysis_done {
-                            initial_volume.min(0.5)
-                        } else {
-                            initial_volume
-                        };
-                        player.volume(volume, muted);
-                    }
+                    volume.restore(saved);
+                    player.volume(volume.value, muted);
                 }
                 Control::Loop { enabled } => looped = enabled,
                 Control::Capture { width, reply } => {
@@ -821,7 +887,7 @@ fn playback_worker(
         }
         if !initialized && state == 3 {
             initialized = true;
-            player.volume(volume, muted);
+            player.volume(volume.value, muted);
         }
         let decision = analysis
             .as_ref()
@@ -830,24 +896,16 @@ fn playback_worker(
             .and_then(|level| {
                 ((level.samples >= 38_400 && level.loud())
                     || started.elapsed() > Duration::from_millis(4500))
-                .then_some(level.loud())
+                .then_some(level.reduction_gain())
             });
-        if !analysis_done
+        if !volume.analysis_done
             && (decision.is_some()
                 || analysis.is_none()
                 || started.elapsed() > Duration::from_secs(5))
         {
-            reduced = decision == Some(true);
-            if !touched {
-                volume = if reduced {
-                    initial_volume.min(0.5)
-                } else {
-                    initial_volume
-                };
-                player.volume(volume, muted);
-            }
+            volume.finish_analysis(decision.unwrap_or(1.0));
+            player.volume(volume.value, muted);
             analysis = None;
-            analysis_done = true;
         }
         let (mut width, mut height) = (0, 0);
         unsafe {
@@ -894,9 +952,9 @@ fn playback_worker(
                 duration: unsafe { (api.get_length)(player.raw) }.max(0) as f64 / 1000.0,
                 width,
                 height,
-                volume,
+                volume: volume.value,
                 muted,
-                auto_reduced: reduced,
+                auto_reduced: volume.reduced,
             };
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -1227,6 +1285,123 @@ mod tests {
         );
     }
     #[test]
+    fn audio_pcm16_values_and_limits_are_exact() {
+        let level = Mutex::new(AudioLevel::default());
+        let samples = [i16::MIN, -16384, 0, 16384, i16::MAX];
+        unsafe {
+            audio_sample(&level as *const _ as Handle, samples.as_ptr().cast(), 5, 0);
+        }
+        let mut measured = level.lock().unwrap();
+        assert_eq!(measured.samples, 5);
+        assert_eq!(measured.peak, 1.0);
+        let expected = samples
+            .iter()
+            .map(|&s| (s as f64 / 32768.0).powi(2))
+            .sum::<f64>();
+        assert!((measured.squares - expected).abs() < 1e-10);
+        measured.samples = 383_999;
+        drop(measured);
+        unsafe {
+            audio_sample(&level as *const _ as Handle, samples.as_ptr().cast(), 5, 0);
+            audio_sample(&level as *const _ as Handle, ptr::null(), 100, 0);
+            audio_sample(ptr::null_mut(), samples.as_ptr().cast(), 5, 0);
+        }
+        assert_eq!(level.lock().unwrap().samples, 384_000);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn audio_pcm16_never_reads_past_guarded_buffer() {
+        use windows_sys::Win32::System::{Memory::*, SystemInformation::GetSystemInfo};
+        unsafe {
+            let mut info = std::mem::zeroed();
+            GetSystemInfo(&mut info);
+            let page = info.dwPageSize as usize;
+            let allocation = VirtualAlloc(
+                ptr::null(),
+                page * 2,
+                MEM_COMMIT | MEM_RESERVE,
+                PAGE_READWRITE,
+            );
+            assert!(!allocation.is_null());
+            struct Guard(Handle);
+            impl Drop for Guard {
+                fn drop(&mut self) {
+                    unsafe {
+                        VirtualFree(self.0, 0, MEM_RELEASE);
+                    }
+                }
+            }
+            let _guard = Guard(allocation);
+            let end = (allocation as *mut u8).add(page);
+            let mut old = 0;
+            assert_ne!(VirtualProtect(end.cast(), page, PAGE_NOACCESS, &mut old), 0);
+            // 1114 samples reproduces the AAC crash's callback count. The old
+            // f32 read always crosses PAGE_NOACCESS; i16 must stop exactly here.
+            for count in [1usize, 1114, page / 2] {
+                let samples = end.sub(count * 2).cast::<i16>();
+                for i in 0..count {
+                    samples.add(i).write(16384);
+                }
+                let level = Mutex::new(AudioLevel::default());
+                audio_sample(
+                    &level as *const _ as Handle,
+                    samples.cast(),
+                    count as u32,
+                    0,
+                );
+                let measured = level.lock().unwrap();
+                assert_eq!(measured.samples, count as u64);
+                assert_eq!(measured.rms(), 0.5);
+                assert_eq!(measured.peak, 0.5);
+            }
+            audio_sample(ptr::null_mut(), end.cast(), 0, 0);
+        }
+    }
+    #[test]
+    fn automatic_volume_is_measured_not_fixed_and_stays_reduced() {
+        let signal = |rms: f64, peak: f32| AudioLevel {
+            squares: rms * rms * 100.0,
+            samples: 100,
+            peak,
+        };
+        assert_eq!(signal(0.1, 0.2).reduction_gain(), 1.0);
+        assert_eq!(AudioLevel::default().reduction_gain(), 1.0);
+        let gain = signal(0.4, 0.8).reduction_gain();
+        assert!((gain - 0.45).abs() < 1e-10);
+        assert!(signal(0.8, 1.0).reduction_gain() < gain);
+        assert!(signal(0.13, 0.99).reduction_gain() < 1.0);
+        let mut volume = PlaybackVolume::new(0.8);
+        assert_eq!(volume.value, 0.8, "no temporary fixed 50% reset");
+        volume.finish_analysis(gain);
+        assert!((volume.value - 0.36).abs() <= 0.01);
+        let lowered = volume.value;
+        volume.restore(1.0);
+        volume.finish_analysis(1.0);
+        assert_eq!(
+            volume.value, lowered,
+            "late data cannot raise the reduced level"
+        );
+        volume.manual(lowered + 0.05);
+        volume.restore(0.9);
+        assert_eq!(
+            volume.value,
+            lowered + 0.05,
+            "manual control starts at reduced level"
+        );
+        let mut low = PlaybackVolume::new(0.1);
+        low.finish_analysis(gain);
+        assert!(low.value < 0.1, "never raise a quiet preference to 50%");
+        let mut zero = PlaybackVolume::new(0.0);
+        zero.finish_analysis(gain);
+        assert_eq!(zero.value, 0.0);
+        let mut early_manual = PlaybackVolume::new(0.8);
+        early_manual.manual(0.7);
+        early_manual.finish_analysis(gain);
+        early_manual.restore(0.9);
+        assert_eq!(early_manual.value, 0.7);
+        assert!(!early_manual.reduced);
+    }
+    #[test]
     fn frames_are_aligned_bounded_and_binary() {
         let picture = Picture::new(161, 93).unwrap();
         assert_eq!(picture.data as usize % 32, 0);
@@ -1325,12 +1500,66 @@ mod tests {
     #[cfg(windows)]
     #[test]
     #[ignore = "requires the verified bundle and synthetic fixtures"]
+    fn aac_audio_analysis_is_bounded_and_measures_pcm16() {
+        let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/libvlc/vlc-3.0.23");
+        let api = engine(&directory.canonicalize().unwrap()).unwrap();
+        let fixtures = PathBuf::from(std::env::var("PIXVAULT_VLC_FIXTURES").unwrap())
+            .parent()
+            .unwrap()
+            .join("vlc-audio-fixtures");
+        for name in [
+            "aac-mono-44100",
+            "aac-stereo-48000",
+            "aac-surround-48000",
+            "aac-quiet-44100",
+        ] {
+            let path = fixtures.join(format!("{name}.mp4"));
+            let before = std::fs::read(&path).unwrap();
+            for _ in 0..3 {
+                let player = Player::open(api.clone(), &path, Output::Audio, false).unwrap();
+                player.play().unwrap();
+                let started = Instant::now();
+                while player._audio.as_ref().unwrap().lock().unwrap().samples < 100_000 {
+                    assert!(
+                        started.elapsed() < Duration::from_secs(10),
+                        "AAC timeout: {name}"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                let measured = player._audio.as_ref().unwrap().lock().unwrap();
+                let quiet = name.contains("quiet");
+                assert!(
+                    measured.rms() > 0.01 && measured.rms() <= 1.0,
+                    "{name}: {}",
+                    measured.rms()
+                );
+                assert_eq!(measured.loud(), !quiet, "{name}: {}", measured.rms());
+                if name == "aac-mono-44100" {
+                    assert!(
+                        (0.38..0.47).contains(&measured.rms()),
+                        "actual S16 signal: {}",
+                        measured.rms()
+                    );
+                }
+                assert_eq!(measured.reduction_gain() < 1.0, !quiet);
+                drop(measured);
+                drop(player);
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires the verified bundle and synthetic fixtures"]
     fn native_session_controls_normalization_and_handle_release() {
         use std::os::windows::fs::OpenOptionsExt;
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/libvlc/vlc-3.0.23");
         let api = engine(&directory.canonicalize().unwrap()).unwrap();
         let path = PathBuf::from(std::env::var("PIXVAULT_VLC_FIXTURES").unwrap())
-            .join("日本語 ffv1.mkv")
+            .parent()
+            .unwrap()
+            .join("vlc-audio-fixtures/aac-mono-44100.mp4")
             .canonicalize()
             .unwrap();
         let (sender, receiver) = mpsc::channel();
@@ -1355,7 +1584,7 @@ mod tests {
                 &worker_session,
                 receiver,
                 1.0,
-                false,
+                true,
                 true,
             );
             worker_session.surface.close();
@@ -1375,10 +1604,12 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(20));
             }
         };
-        wait_status(&|s| s.auto_reduced && s.width == 320 && s.volume == 0.5);
+        wait_status(&|s| s.auto_reduced && s.width == 320 && s.volume > 0.0 && s.volume < 0.5);
+        let reduced_volume = session.status.lock().unwrap().volume;
         control_vlc_player(id.clone(), Control::InitialVolume { volume: 0.9 }).unwrap();
         control_vlc_player(id.clone(), Control::Pause).unwrap();
         wait_status(&|s| s.state == "paused");
+        assert!(session.status.lock().unwrap().volume <= reduced_volume);
         control_vlc_player(id.clone(), Control::Seek { time: 1.2 }).unwrap();
         control_vlc_player(
             id.clone(),
@@ -1391,6 +1622,8 @@ mod tests {
         wait_status(&|s| s.volume == 0.7 && s.muted && (s.time - 1.2).abs() < 0.2);
         control_vlc_player(id.clone(), Control::Play).unwrap();
         wait_status(&|s| s.state == "playing");
+        control_vlc_player(id.clone(), Control::InitialVolume { volume: 0.9 }).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
         assert_eq!(session.status.lock().unwrap().volume, 0.7);
         tauri::async_runtime::block_on(close_vlc_player(id)).unwrap();
         worker.join().unwrap().unwrap();

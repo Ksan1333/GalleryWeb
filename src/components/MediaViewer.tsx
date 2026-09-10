@@ -2674,7 +2674,7 @@ function VideoViewer({
               style={{ "--pv-volume-progress": `${volume * 100}%` } as React.CSSProperties}
               onChange={(event) => changeVolume(Number(event.currentTarget.value))}
             />
-            <small title={autoVolumeReductionActive ? "大きな音量を検出したため、再生ゲインを50%から開始しています" : undefined}>
+            <small title={autoVolumeReductionActive ? "大きな音量を検出したため、音量を自動調整しています" : undefined}>
               {muted ? "消音" : `${Math.round(volume * 100)}%`}
               {autoVolumeReductionActive && !muted ? " · 自動調整" : ""}
             </small>

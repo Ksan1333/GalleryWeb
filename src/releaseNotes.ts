@@ -11,6 +11,16 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.4.1",
+    date: "2026-09-10",
+    title: "音声解析クラッシュと自動音量調整を修正",
+    changes: [
+      "音量解析で16bit音声を32bitとして読み取り、動画を開くとクラッシュする問題を修正",
+      "Windows版の自動音量調整を一律50%から実測に応じた減衰へ変更し、下げた音量を維持",
+      "手動操作は調整後の音量から上下し、遅れて読み込まれた設定や解析結果で上書きしない",
+    ],
+  },
+  {
     version: "0.4.0",
     date: "2026-09-10",
     title: "動画をGPUで直接描画",
