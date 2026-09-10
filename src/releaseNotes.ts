@@ -11,6 +11,16 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.3.1",
+    date: "2026-09-10",
+    title: "libVLC初期化エラーの修正",
+    changes: [
+      "Windowsの内部形式のインストールパスでlibVLCのプラグインが見つからず、初期化に失敗する問題を修正",
+      "DLLを読み込む前に通常の絶対パスへ正規化し、実アプリと同じパス条件での回帰検証を追加",
+      "動画の直接再生・変換機能の廃止・非遮断の読み込み表示は維持",
+    ],
+  },
+  {
     version: "0.3.0",
     date: "2026-09-10",
     title: "libVLCによる元動画の直接再生",

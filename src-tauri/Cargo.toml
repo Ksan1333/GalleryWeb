@@ -1,6 +1,6 @@
 [package]
 name = "galleryweb"
-version = "0.3.0"
+version = "0.3.1"
 description = "Windows 10/11 edition of PixVault"
 authors = ["Ninji"]
 edition = "2024"

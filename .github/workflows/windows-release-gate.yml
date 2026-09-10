@@ -82,6 +82,9 @@ jobs:
       - name: Run release tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --release
 
+      - name: Initialize production libVLC from a canonical resource path
+        run: cargo run --manifest-path src-tauri/Cargo.toml --release --example vlc_initialization_probe -- src-tauri/target/libvlc/vlc-3.0.23
+
       - name: Benchmark the thumbnail pipeline
         run: |
           npm run perf:thumbnails -- -Rounds 7 -BatchItems 32 -JsonPath artifacts/thumbnail-benchmark.json

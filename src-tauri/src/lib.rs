@@ -24,6 +24,12 @@ mod web_search;
 mod windows_notifications;
 mod x_downloader;
 
+/// CLI-only runtime probe. Initializes the production libVLC loader without
+/// creating a Tauri window, media player, or accessing the user's catalog.
+pub fn probe_vlc_runtime(directory: &std::path::Path) -> Result<(), String> {
+    vlc_playback::probe_runtime(directory)
+}
+
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},

@@ -81,6 +81,12 @@ impl Api {
         unsafe {
             use std::os::windows::ffi::OsStrExt;
             use windows_sys::Win32::System::LibraryLoader::*;
+            // Tauri canonicalizes resource_dir(), producing \\?\ paths. VLC 3
+            // derives its plugin directory from the DLL's recorded load path;
+            // loading a verbatim path makes discovery fail even though the DLL
+            // itself loads successfully. Normalize BEFORE loading either DLL.
+            let compatible_directory = vlc_path_text(directory)?;
+            let directory = Path::new(&compatible_directory);
             // Keep the verified bundled libraries loaded for the process lifetime.
             // Never look in the current directory or change the global DLL path.
             let load = |name: &str| {
@@ -165,6 +171,10 @@ impl Api {
 static API: OnceLock<Result<Arc<Api>, String>> = OnceLock::new();
 fn engine(path: &Path) -> Result<Arc<Api>, String> {
     API.get_or_init(|| Api::load(path).map(Arc::new)).clone()
+}
+
+pub(crate) fn probe_runtime(directory: &Path) -> Result<(), String> {
+    engine(directory).map(|_| ())
 }
 
 // libVLC requires 32-byte aligned planes. Buffers return to the small pool only
@@ -362,19 +372,25 @@ struct Player {
     _sink: Option<Arc<Sink>>,
     _audio: Option<Box<Mutex<AudioLevel>>>,
 }
-fn vlc_path(source: &Path) -> Result<CString, String> {
+fn vlc_path_text(source: &Path) -> Result<String, String> {
     let value = source
         .to_str()
-        .ok_or("Unicodeではない動画パスは開けません。")?;
-    // libvlc_media_new_path turns the verbatim prefix returned by Windows
-    // canonicalize into an invalid file://?/ URL. Preserve UNC shares instead
-    // of dropping their leading slashes. Catalog authorization happens first.
+        .ok_or("UnicodeではないパスはlibVLCで開けません。")?;
+    if value.contains('\0') {
+        return Err("libVLCのパスにNUL文字は使用できません。".into());
+    }
+    // Both DLL/plugin discovery and media_new_path need non-verbatim paths.
+    // Preserve UNC shares instead of dropping their leading slashes. Source
+    // media authorization happens in the catalog before normalization.
     let compatible = if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
     } else {
         value.strip_prefix(r"\\?\").unwrap_or(value).to_owned()
     };
-    CString::new(compatible).map_err(|e| e.to_string())
+    Ok(compatible)
+}
+fn vlc_path(source: &Path) -> Result<CString, String> {
+    CString::new(vlc_path_text(source)?).map_err(|e| e.to_string())
 }
 impl Player {
     fn open(
@@ -837,6 +853,18 @@ mod tests {
         assert!(vlc_path(Path::new("bad\0path")).is_err());
     }
     #[test]
+    fn runtime_directory_normalization_preserves_spaces_unicode_and_unc() {
+        assert_eq!(
+            vlc_path_text(Path::new(r"\\?\C:\アプリ\PixVault for Windows\vlc")).unwrap(),
+            r"C:\アプリ\PixVault for Windows\vlc"
+        );
+        assert_eq!(
+            vlc_path_text(Path::new(r"\\?\UNC\server\共有\PixVault\vlc")).unwrap(),
+            r"\\server\共有\PixVault\vlc"
+        );
+        assert!(vlc_path_text(Path::new("invalid\0directory")).is_err());
+    }
+    #[test]
     fn bounds_frames_without_changing_aspect() {
         assert_eq!(display_dimensions(3840, 2160), Some((1920, 1080)));
         assert_eq!(display_dimensions(1080, 1920), Some((608, 1080)));
@@ -903,7 +931,7 @@ mod tests {
     #[ignore = "requires the verified bundle and synthetic fixtures"]
     fn direct_decode_synthetic_formats() {
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/libvlc/vlc-3.0.23");
-        let api = engine(&directory).unwrap();
+        let api = engine(&directory.canonicalize().unwrap()).unwrap();
         let fixtures = PathBuf::from(std::env::var("PIXVAULT_VLC_FIXTURES").unwrap());
         let mut count = 0;
         for entry in std::fs::read_dir(fixtures).unwrap().flatten() {
@@ -964,7 +992,7 @@ mod tests {
     fn native_session_controls_normalization_and_handle_release() {
         use std::os::windows::fs::OpenOptionsExt;
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/libvlc/vlc-3.0.23");
-        let api = engine(&directory).unwrap();
+        let api = engine(&directory.canonicalize().unwrap()).unwrap();
         let path = PathBuf::from(std::env::var("PIXVAULT_VLC_FIXTURES").unwrap())
             .join("日本語 ffv1.mkv")
             .canonicalize()
