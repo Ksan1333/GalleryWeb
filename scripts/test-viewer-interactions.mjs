@@ -159,6 +159,12 @@ try {
     'recommendations start hidden');
   assert.equal(await page.locator('.pv-viewer-rail.is-collapsed').count(), 1,
     'the viewer list starts hidden');
+  const initialInfoBox=await page.locator('.pv-media-info-panel.is-collapsed').boundingBox();
+  const initialRailBox=await page.locator('.pv-viewer-rail.is-collapsed').boundingBox();
+  assert.ok(initialInfoBox&&initialInfoBox.height>initialInfoBox.width*2,
+    'a right-docked minimized recommendation panel keeps the edge-tab shape');
+  assert.ok(initialRailBox&&initialRailBox.width>initialRailBox.height*2,
+    'a bottom-docked minimized list keeps the edge-tab shape');
   await page.getByRole('button',{name:'情報とレコメンドを開く'}).click();
   await page.getByRole('button',{name:'メディア一覧を開く'}).click();
   await page.locator('.pv-media-info-list dd').first().waitFor();
@@ -213,6 +219,19 @@ try {
   });
   await page.waitForFunction(()=>window.__fixture.playback.time===70);
   assert.equal(await time(),70,'native HWND input bridge reaches actual React double-tap seek');
+  await reset();
+  await page.getByRole('button',{name:'すべての枠を非表示（Escで戻す）'}).click();
+  assert.equal(await page.locator('.pv-viewer-header').count(),0,'hide-all removes viewer chrome');
+  await page.getByRole('button',{name:'すべての枠を表示（Esc）'}).click();
+  assert.equal(await page.locator('.pv-viewer-header').count(),1,'viewer chrome can be restored without closing media');
+  await page.evaluate(async()=>{
+    const rect=document.querySelector('.pv-video-surface').getBoundingClientRect();
+    const send=window.__fixture.listeners['pixvault://vlc-input/viewer-job'];
+    const x=(rect.x+rect.width*.8)*devicePixelRatio,y=(rect.y+rect.height*.5)*devicePixelRatio;
+    const tap=()=>{send({payload:{kind:'pointerdown',x,y,buttons:1,delta:0}});send({payload:{kind:'pointerup',x,y,buttons:0,delta:0}})};
+    tap();await new Promise(resolve=>setTimeout(resolve,150));tap();
+  });
+  await page.waitForFunction(()=>window.__fixture.playback.time===70);
   await reset();
   await surface.dblclick({position:{x:bounds.width*.8,y:bounds.height*.5}});
   const mouseTime=await time();await reset();

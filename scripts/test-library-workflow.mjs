@@ -14,7 +14,16 @@ const hookCode = ts.transpileModule(read("src/hooks/useViewerFullscreen.ts"), {
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 function fullscreenHarness(initial = false) {
-  const state = { native: initial, rendered: false, writes: [], fail: false };
+  const state = {
+    native: initial,
+    rendered: false,
+    writes: [],
+    fail: false,
+    maximized: false,
+    position: { x: 120, y: 80 },
+    size: { width: 1280, height: 760 },
+    placementWrites: [],
+  };
   const effects = [];
   const module = { exports: {} };
   const window = {
@@ -25,6 +34,13 @@ function fullscreenHarness(initial = false) {
       state.native = next;
     },
     onResized: async () => () => {},
+    outerPosition: async () => state.position,
+    outerSize: async () => state.size,
+    isMaximized: async () => state.maximized,
+    maximize: async () => { state.maximized = true; state.placementWrites.push("maximize"); },
+    unmaximize: async () => { state.maximized = false; state.placementWrites.push("unmaximize"); },
+    setPosition: async (value) => { state.position = value; state.placementWrites.push(["position", value.x, value.y]); },
+    setSize: async (value) => { state.size = value; state.placementWrites.push(["size", value.width, value.height]); },
   };
   vm.runInNewContext(hookCode, {
     exports: module.exports, module,
@@ -36,6 +52,10 @@ function fullscreenHarness(initial = false) {
         useEffect: (effect) => effects.push(effect),
       };
       if (name === "@tauri-apps/api/window") return { getCurrentWindow: () => window };
+      if (name === "@tauri-apps/api/dpi") return {
+        PhysicalPosition: class { constructor(x, y) { this.x = x; this.y = y; } },
+        PhysicalSize: class { constructor(width, height) { this.width = width; this.height = height; } },
+      };
       if (name === "../services/native") return { isTauriRuntime: () => true };
       return require(name);
     },
@@ -54,6 +74,7 @@ test("fullscreen uses the native window and restores its previous state on close
   unmount();
   await settle();
   assert.deepEqual(state.writes, [true, false]);
+  assert.deepEqual(state.placementWrites, [["size", 1280, 760], ["position", 120, 80]]);
 });
 
 test("rapid fullscreen toggles are serialized and Escape exits without closing the viewer", async () => {
@@ -98,4 +119,7 @@ test("folder browsing is lazy, refresh reaches disk, and viewer caches use a cat
   assert.ok(!viewer.includes("コントロールパネルを非表示"));
   assert.ok(capabilities.permissions.includes("core:window:allow-set-fullscreen"));
   assert.ok(capabilities.permissions.includes("core:window:allow-is-fullscreen"));
+  for (const permission of ["outer-position", "outer-size", "is-maximized", "set-position", "set-size"]) {
+    assert.ok(capabilities.permissions.includes(`core:window:allow-${permission}`));
+  }
 });

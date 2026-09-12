@@ -1,9 +1,11 @@
 use std::{
-    cmp::Ordering,
     fs::{self, File, OpenOptions},
     io::{BufWriter, Cursor, Read, Write},
     path::{Path, PathBuf},
 };
+
+#[cfg(test)]
+use std::cmp::Ordering;
 
 use image::{DynamicImage, ImageReader, codecs::jpeg::JpegEncoder};
 use uuid::Uuid;
@@ -139,7 +141,7 @@ fn first_archive_image(path: &Path) -> Result<Option<DynamicImage>, String> {
         candidates.push((normalized_name, index));
     }
 
-    candidates.sort_by(|left, right| natural_name_cmp(&left.0, &right.0));
+    candidates.sort_by(|left, right| crate::filename_order::explorer_name_cmp(&left.0, &right.0));
     let mut last_decode_error = None;
 
     for (name, index) in candidates {
@@ -301,56 +303,9 @@ fn is_supported_image_name(name: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 fn natural_name_cmp(left: &str, right: &str) -> Ordering {
-    let left = left.as_bytes();
-    let right = right.as_bytes();
-    let (mut left_index, mut right_index) = (0, 0);
-
-    while left_index < left.len() && right_index < right.len() {
-        if left[left_index].is_ascii_digit() && right[right_index].is_ascii_digit() {
-            let left_start = left_index;
-            let right_start = right_index;
-            while left_index < left.len() && left[left_index].is_ascii_digit() {
-                left_index += 1;
-            }
-            while right_index < right.len() && right[right_index].is_ascii_digit() {
-                right_index += 1;
-            }
-
-            let left_digits = &left[left_start..left_index];
-            let right_digits = &right[right_start..right_index];
-            let left_significant = trim_leading_zeroes(left_digits);
-            let right_significant = trim_leading_zeroes(right_digits);
-            let ordering = left_significant
-                .len()
-                .cmp(&right_significant.len())
-                .then_with(|| left_significant.cmp(right_significant))
-                .then_with(|| left_digits.len().cmp(&right_digits.len()));
-            if ordering != Ordering::Equal {
-                return ordering;
-            }
-            continue;
-        }
-
-        let ordering = left[left_index]
-            .to_ascii_lowercase()
-            .cmp(&right[right_index].to_ascii_lowercase());
-        if ordering != Ordering::Equal {
-            return ordering;
-        }
-        left_index += 1;
-        right_index += 1;
-    }
-
-    left.len().cmp(&right.len())
-}
-
-fn trim_leading_zeroes(digits: &[u8]) -> &[u8] {
-    let first_nonzero = digits
-        .iter()
-        .position(|digit| *digit != b'0')
-        .unwrap_or(digits.len().saturating_sub(1));
-    &digits[first_nonzero..]
+    crate::filename_order::explorer_name_cmp(left, right)
 }
 
 fn jpeg_exif_orientation(bytes: &[u8]) -> Option<u16> {

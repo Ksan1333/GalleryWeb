@@ -66,7 +66,7 @@ import {
 } from "../services/folderActivity";
 import { useFolderActivity } from "../hooks/useFolderActivity";
 import type { TagGalleryNavigationRequest } from "../services/galleryNavigation";
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
 import {
   loadGallerySearchHistory,
   rememberGallerySearch,
@@ -296,6 +296,13 @@ function mediaKindLabel(kind: MediaKind): string {
     case "document": return "文書";
     default: return "ファイル";
   }
+}
+
+function mediaKindIcon(kind: MediaKind): IconName {
+  if (kind === "video") return "video";
+  if (kind === "pdf" || kind === "archive") return "book";
+  if (kind === "image" || kind === "gif") return "image";
+  return "file";
 }
 
 function createThumbnailDataUrl(element: HTMLImageElement | HTMLVideoElement): string | undefined {
@@ -570,7 +577,6 @@ function SettledMediaPlaceholder({
   return (
     <div className={`media-placeholder kind-${item.kind}`} aria-hidden="true">
       <Icon name={item.kind === "video" ? "video" : item.kind === "pdf" || item.kind === "archive" ? "book" : item.kind === "document" ? "file" : "image"} />
-      <span>{item.kind === "pdf" ? "PDF" : item.kind === "archive" ? "ZIP / CBZ" : item.kind.toUpperCase()}</span>
     </div>
   );
 }
@@ -1209,8 +1215,12 @@ function directChildFolders(
       hasChildren,
     });
   }
+  const explorerLike = new Intl.Collator("en-US", {
+    numeric: true,
+    sensitivity: "base",
+  });
   return [...children.values()].sort((left, right) =>
-    left.name.localeCompare(right.name, "ja", { numeric: true }),
+    explorerLike.compare(left.name, right.name),
   );
 }
 
@@ -1306,14 +1316,20 @@ const MediaCard = memo(function MediaCard({
             onSettled={markFirstMediaThumbnail}
             thumbnailPriority={thumbnailPriority}
           />
-          <span className="media-type-label">{mediaKindLabel(item.kind)}</span>
-          <span className={`age-rating-badge age-${item.ageRating.toLowerCase()}`}>
-            {item.ageRating === "UNRATED" ? "未選択" : item.ageRating}
+          <span
+            className={`media-type-label kind-${item.kind}`}
+            aria-label={mediaKindLabel(item.kind)}
+            title={mediaKindLabel(item.kind)}
+          >
+            <Icon name={mediaKindIcon(item.kind)} />
           </span>
-          {item.durationSeconds && <span className="duration-badge">{formatDuration(item.durationSeconds)}</span>}
-          {(item.pageCount || item.kind === "pdf" || item.kind === "archive") && (
-            <span className="kind-badge">{item.pageCount ? `${item.pageCount}ページ` : item.kind.toUpperCase()}</span>
+          {item.ageRating !== "UNRATED" && (
+            <span className={`age-rating-badge age-${item.ageRating.toLowerCase()}`}>
+              {item.ageRating}
+            </span>
           )}
+          {item.durationSeconds && <span className="duration-badge">{formatDuration(item.durationSeconds)}</span>}
+          {Boolean(item.pageCount) && <span className="kind-badge">{item.pageCount}ページ</span>}
         </div>
         {(gridSize !== "minimum" || compactFileLayout) && (
           <div className="media-copy">

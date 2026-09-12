@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
 };
@@ -384,7 +383,7 @@ impl AppState {
 
 fn configure_connection(connection: &Connection) -> Result<(), String> {
     connection
-        .create_collation("PIXVAULT_NATURAL", natural_name_cmp)
+        .create_collation("PIXVAULT_NATURAL", crate::filename_order::explorer_name_cmp)
         .map_err(|error| format!("Failed to register natural filename ordering: {error}"))?;
     connection
         .execute_batch(
@@ -395,61 +394,6 @@ fn configure_connection(connection: &Connection) -> Result<(), String> {
              PRAGMA journal_size_limit = 67108864;",
         )
         .map_err(|error| format!("Failed to configure SQLite: {error}"))
-}
-
-/// Case-insensitive numeric filename ordering that follows Windows Explorer's
-/// logical order for ordinary media names (1, 2, 10 instead of 1, 10, 2).
-fn natural_name_cmp(left: &str, right: &str) -> Ordering {
-    let left_folded = left.to_lowercase();
-    let right_folded = right.to_lowercase();
-    let left_bytes = left_folded.as_bytes();
-    let right_bytes = right_folded.as_bytes();
-    let (mut left_index, mut right_index) = (0, 0);
-
-    while left_index < left_bytes.len() && right_index < right_bytes.len() {
-        if left_bytes[left_index].is_ascii_digit() && right_bytes[right_index].is_ascii_digit() {
-            let left_start = left_index;
-            let right_start = right_index;
-            while left_index < left_bytes.len() && left_bytes[left_index].is_ascii_digit() {
-                left_index += 1;
-            }
-            while right_index < right_bytes.len() && right_bytes[right_index].is_ascii_digit() {
-                right_index += 1;
-            }
-            let left_digits = &left_bytes[left_start..left_index];
-            let right_digits = &right_bytes[right_start..right_index];
-            let left_significant = &left_digits[left_digits
-                .iter()
-                .position(|byte| *byte != b'0')
-                .unwrap_or(left_digits.len())..];
-            let right_significant = &right_digits[right_digits
-                .iter()
-                .position(|byte| *byte != b'0')
-                .unwrap_or(right_digits.len())..];
-            match left_significant
-                .len()
-                .cmp(&right_significant.len())
-                .then_with(|| left_significant.cmp(right_significant))
-                .then_with(|| left_digits.len().cmp(&right_digits.len()))
-            {
-                Ordering::Equal => {}
-                ordering => return ordering,
-            }
-            continue;
-        }
-        match left_bytes[left_index].cmp(&right_bytes[right_index]) {
-            Ordering::Equal => {
-                left_index += 1;
-                right_index += 1;
-            }
-            ordering => return ordering,
-        }
-    }
-
-    left_bytes
-        .len()
-        .cmp(&right_bytes.len())
-        .then_with(|| left.cmp(right))
 }
 
 fn migrate(connection: &mut Connection) -> Result<(), String> {
@@ -694,11 +638,27 @@ mod tests {
     fn natural_filename_collation_matches_explorer_numeric_order() {
         let database = Database::in_memory().expect("database should initialize");
         let connection = database.lock().expect("database lock");
-        let mut names = vec!["10.webp", "2.webp", "1.webp", "page02.webp", "page2.webp"];
-        names.sort_by(|left, right| natural_name_cmp(left, right));
+        let mut names = vec![
+            "a",
+            "10.webp",
+            "2.webp",
+            "1.webp",
+            "page02.webp",
+            "page2.webp",
+            "[a]",
+        ];
+        names.sort_by(|left, right| crate::filename_order::explorer_name_cmp(left, right));
         assert_eq!(
             names,
-            ["1.webp", "2.webp", "10.webp", "page2.webp", "page02.webp"]
+            [
+                "[a]",
+                "1.webp",
+                "2.webp",
+                "10.webp",
+                "a",
+                "page02.webp",
+                "page2.webp"
+            ]
         );
         let sqlite_order: String = connection
             .query_row(

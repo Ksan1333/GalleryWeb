@@ -23,8 +23,9 @@ const budgets = {
   // 0.2.9 allows 8 KiB for the viewer replacement handoff and centered action bar.
   // 0.3.0 adds 8 KiB for the lazy libVLC canvas/IPC bridge and release notes.
   // 0.5.0 adds 10 KiB for lazy movable panels and unified gallery controls.
+  // 0.6.0 adds 8 KiB for lazy viewer chrome controls and release history.
   // Startup and individual chunk limits stay unchanged.
-  totalAssetBytes: 2646 * 1024,
+  totalAssetBytes: 2654 * 1024,
 };
 
 function fail(message) {

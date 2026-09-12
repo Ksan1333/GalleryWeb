@@ -11,6 +11,8 @@
 //! intentionally outside this native-core benchmark and require an app-level
 //! trace.
 
+#[path = "../src/filename_order.rs"]
+mod filename_order;
 #[path = "../src/thumbnail_cache.rs"]
 mod thumbnail_cache;
 #[path = "../src/video_decode.rs"]

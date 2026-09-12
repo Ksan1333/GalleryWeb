@@ -176,7 +176,9 @@ pub fn browse(state: &AppState, path: Option<&str>, scan: bool) -> Result<Folder
             });
         }
     }
-    folders.sort_by_cached_key(|folder| folder.display_name.to_lowercase());
+    folders.sort_by(|left, right| {
+        crate::filename_order::explorer_name_cmp(&left.display_name, &right.display_name)
+    });
     let scope = resolve_catalog_scope(state, &canonical)?;
     if scan {
         catalog::scan_folder(state, &scope.root_id, &scope.relative_folder)?;

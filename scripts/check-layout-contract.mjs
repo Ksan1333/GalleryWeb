@@ -13,6 +13,10 @@ const viewerCss = readFileSync(resolve(projectRoot, "src/components/MediaViewer.
 const displaySettings = readFileSync(resolve(projectRoot, "src/components/GalleryDisplaySettings.tsx"), "utf8");
 const displayPreferences = readFileSync(resolve(projectRoot, "src/services/galleryDisplayPreferences.ts"), "utf8");
 const folderActivity = readFileSync(resolve(projectRoot, "src/services/folderActivity.ts"), "utf8");
+const database = readFileSync(resolve(projectRoot, "src-tauri/src/db.rs"), "utf8");
+const filenameOrder = readFileSync(resolve(projectRoot, "src-tauri/src/filename_order.rs"), "utf8");
+const catalog = readFileSync(resolve(projectRoot, "src-tauri/src/catalog.rs"), "utf8");
+const filesystemBrowser = readFileSync(resolve(projectRoot, "src/components/FileSystemBrowser.tsx"), "utf8");
 
 const contracts = [
   [app.includes('href="#main-content"'), "skip link targets the main content"],
@@ -46,6 +50,14 @@ const contracts = [
   [mediaViewer.includes("useState(false)") && mediaViewer.includes('className={`pv-viewer-rail placement-${placement}'), "viewer list and recommendations start hidden"],
   [mediaViewer.includes('value: "top"') && mediaViewer.includes('value: "bottom"') && mediaViewer.includes('value: "left"') && mediaViewer.includes('value: "right"') && mediaViewer.includes('value: "floating"'), "viewer panels support all five placements"],
   [viewerCss.includes(".pv-viewer-rail.is-collapsed") && viewerCss.includes("border-radius: 50%") && viewerCss.includes(".pv-media-info-panel.is-collapsed"), "minimized floating viewer panels use round icons"],
+  [viewerCss.includes(".is-collapsed:not(.placement-floating)") && viewerCss.includes("width: 190px") && viewerCss.includes("height: 150px"), "docked minimized panels retain edge-tab shapes"],
+  [viewerCss.includes('content: "○ 上へ移動"') && viewerCss.includes('content: "○ フローティングへ移動"'), "both movable panels expose a translucent destination preview"],
+  [mediaViewer.includes('className="pv-viewer-title-zoom"') && mediaViewer.includes("showEntireImage") && !mediaViewer.includes('className="pv-image-zoom-controls"'), "image zoom and whole-image fit controls live in the viewer title tab"],
+  [mediaViewer.includes('label="すべての枠を非表示（Escで戻す）"') && mediaViewer.includes("!isFullscreen"), "viewer chrome can be hidden beside fullscreen and the button disappears in fullscreen"],
+  [mediaCollection.includes("mediaKindIcon") && !mediaCollection.includes('item.kind.toUpperCase()') && !mediaCollection.includes('item.ageRating === "UNRATED" ? "未選択"'), "gallery uses color-coded media icons without UNRATED or ARCHIVE labels"],
+  [appCss.includes(".view-mode-details) .virtual-media-card.is-compact-file .media-card-actions") && appCss.includes("opacity: 1"), "list and details views keep favorite and delete actions visible"],
+  [filesystemBrowser.includes('forcedSortOrder="name-asc"') && filenameOrder.includes("StrCmpLogicalW") && database.includes('"[a]"') && database.includes('"1.webp"'), "direct Explorer folders and viewer collections use Windows logical name order"],
+  [catalog.includes("sync_parent_folder_tag") && catalog.includes("source = 'folder'") && catalog.includes('matches!(media_kind, "video" | "pdf" | "zip")'), "books and videos keep one managed current-parent-folder tag"],
 ];
 
 const failures = contracts.filter(([passed]) => !passed);

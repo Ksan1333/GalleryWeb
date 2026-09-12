@@ -46,19 +46,33 @@ if ($installer.VersionInfo.FileVersion -ne $version -or $installer.VersionInfo.P
     throw "Installer metadata does not match $version"
 }
 
+# Codex/bundled Node runtimes can prepend a copied PowerShell module directory
+# whose security module is blocked by Windows' AuthorizationManager. Import the
+# trusted in-box module explicitly so this check behaves the same inside and
+# outside package-manager scripts.
+$securityModule = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
+Import-Module -Name $securityModule -Force
 $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
 if ($RequireSignature -and $signature.Status -ne "Valid") {
     throw "A valid Authenticode signature is required; current status is $($signature.Status)"
 }
 
-$hash = Get-FileHash -Algorithm SHA256 -LiteralPath $installerPath
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$installerStream = [System.IO.File]::OpenRead($installerPath)
+try {
+    $hashValue = ([System.BitConverter]::ToString($sha256.ComputeHash($installerStream))).Replace("-", "")
+}
+finally {
+    $installerStream.Dispose()
+    $sha256.Dispose()
+}
 $manifest = [ordered]@{
     formatVersion = 1
     product = "PixVault for Windows"
     version = $version
     fileName = $installer.Name
     bytes = $installer.Length
-    sha256 = $hash.Hash
+    sha256 = $hashValue
     authenticodeStatus = [string]$signature.Status
     signed = $signature.Status -eq "Valid"
 }
@@ -66,5 +80,5 @@ $manifestPath = Join-Path $bundleDirectory "release-manifest.json"
 $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
 
 Write-Host "Release artifact check passed: $expectedName"
-Write-Host "SHA-256: $($hash.Hash)"
+Write-Host "SHA-256: $hashValue"
 Write-Host "Authenticode: $($signature.Status)"

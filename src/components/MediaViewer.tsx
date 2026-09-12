@@ -1,6 +1,8 @@
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -123,6 +125,13 @@ type ViewerRuntimeMetadata = {
   width?: number;
   height?: number;
   durationSeconds?: number;
+};
+
+type ImageZoomHandle = {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  showActualSize: () => void;
+  showEntireImage: () => void;
 };
 
 const VIEWER_PANEL_PLACEMENTS: Array<{
@@ -797,6 +806,8 @@ function MediaInfoSidebar({
   const [floatingPosition, setFloatingPosition] = useState({ x: 72, y: 72 });
   const panelRef = useRef<HTMLElement>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const suppressToggleRef = useRef(false);
   const translateTag = useTagTranslations();
   const [tagNavigationTag, setTagNavigationTag] = useState<Tag>();
   const {
@@ -824,6 +835,9 @@ function MediaInfoSidebar({
 
   const handleDragMove = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!dragging) return;
+    if (Math.hypot(event.clientX - dragStartRef.current.x, event.clientY - dragStartRef.current.y) > 4) {
+      suppressToggleRef.current = true;
+    }
     const bounds = panelRef.current?.parentElement?.getBoundingClientRect();
     if (!bounds) return;
     const next = viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds);
@@ -842,6 +856,23 @@ function MediaInfoSidebar({
         )),
       });
     }
+  };
+
+  const startLayoutDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const panelBounds = panelRef.current?.getBoundingClientRect();
+    dragOffsetRef.current = panelBounds
+      ? {
+          x: Math.max(0, event.clientX - panelBounds.left),
+          y: Math.max(0, event.clientY - panelBounds.top),
+        }
+      : { x: 24, y: 24 };
+    dragStartRef.current = { x: event.clientX, y: event.clientY };
+    suppressToggleRef.current = false;
+    setDragTarget(layout);
+    setDragging(true);
   };
 
   const finishLayoutDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -886,20 +917,7 @@ function MediaInfoSidebar({
           className="pv-media-info-drag-handle"
           aria-label="情報とレコメンドをドラッグして移動"
           title="ドラッグして上・下・左・右・フローティングへ移動"
-          onPointerDown={(event) => {
-            if (event.pointerType === "mouse" && event.button !== 0) return;
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            const panelBounds = panelRef.current?.getBoundingClientRect();
-            dragOffsetRef.current = panelBounds
-              ? {
-                  x: Math.max(0, event.clientX - panelBounds.left),
-                  y: Math.max(0, event.clientY - panelBounds.top),
-                }
-              : { x: 88, y: 21 };
-            setDragTarget(layout);
-            setDragging(true);
-          }}
+          onPointerDown={startLayoutDrag}
           onPointerMove={handleDragMove}
           onPointerUp={finishLayoutDrag}
           onPointerCancel={() => setDragging(false)}
@@ -918,7 +936,18 @@ function MediaInfoSidebar({
           aria-expanded={open}
           aria-label={open ? "情報とレコメンドを閉じる" : "情報とレコメンドを開く"}
           title={open ? "閉じる" : "開く"}
-          onClick={onToggleOpen}
+          onPointerDown={!open && layout === "floating" ? startLayoutDrag : undefined}
+          onPointerMove={!open && layout === "floating" ? handleDragMove : undefined}
+          onPointerUp={!open && layout === "floating" ? finishLayoutDrag : undefined}
+          onPointerCancel={!open && layout === "floating" ? () => setDragging(false) : undefined}
+          onClick={(event) => {
+            if (suppressToggleRef.current) {
+              event.preventDefault();
+              suppressToggleRef.current = false;
+              return;
+            }
+            onToggleOpen();
+          }}
         >
           <Icon name={open ? "minus" : "sparkles"} />
         </button>
@@ -1287,6 +1316,8 @@ function MediaThumbnailRail({
   const [dragTarget, setDragTarget] = useState<ViewerPanelPlacement>(placement);
   const [floatingPosition, setFloatingPosition] = useState({ x: 96, y: 96 });
   const dragOffsetRef = useRef({ x: 0, y: 0 });
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const suppressToggleRef = useRef(false);
   const [visibleRange, setVisibleRange] = useState<ViewerRailRange>(() =>
     viewerRailInitialRange(itemCount, currentIndex),
   );
@@ -1352,6 +1383,9 @@ function MediaThumbnailRail({
 
   const handleDragMove = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!dragging) return;
+    if (Math.hypot(event.clientX - dragStartRef.current.x, event.clientY - dragStartRef.current.y) > 4) {
+      suppressToggleRef.current = true;
+    }
     const bounds = railRef.current?.parentElement?.getBoundingClientRect();
     if (!bounds) return;
     const next = viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds);
@@ -1364,6 +1398,20 @@ function MediaThumbnailRail({
         y: Math.max(8, Math.min(event.clientY - bounds.top - dragOffsetRef.current.y, bounds.height - panelHeight - 8)),
       });
     }
+  };
+
+  const startDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const railBounds = railRef.current?.getBoundingClientRect();
+    dragOffsetRef.current = railBounds
+      ? { x: event.clientX - railBounds.left, y: event.clientY - railBounds.top }
+      : { x: 24, y: 24 };
+    dragStartRef.current = { x: event.clientX, y: event.clientY };
+    suppressToggleRef.current = false;
+    setDragTarget(placement);
+    setDragging(true);
   };
 
   const finishDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -1396,29 +1444,30 @@ function MediaThumbnailRail({
           aria-expanded={open}
           aria-label={open ? "メディア一覧を閉じる" : "メディア一覧を開く"}
           title={open ? "一覧を閉じる" : "一覧を開く"}
-          onClick={onToggle}
+          onPointerDown={!open && placement === "floating" ? startDrag : undefined}
+          onPointerMove={!open && placement === "floating" ? handleDragMove : undefined}
+          onPointerUp={!open && placement === "floating" ? finishDrag : undefined}
+          onPointerCancel={!open && placement === "floating" ? () => setDragging(false) : undefined}
+          onClick={(event) => {
+            if (suppressToggleRef.current) {
+              event.preventDefault();
+              suppressToggleRef.current = false;
+              return;
+            }
+            onToggle();
+          }}
         >
           <Icon name={open ? "eyeOff" : "gallery"} />
           <span>{open ? "一覧を閉じる" : "一覧を開く"}</span>
         </button>
         {open && <ViewerPanelPlacementControls value={placement} onChange={onPlacementChange} />}
-        {open && (
+        {(open || placement !== "floating") && (
           <button
             type="button"
             className="pv-viewer-rail-drag-handle"
             aria-label="メディア一覧をドラッグして移動"
             title="ドラッグして上・下・左・右・フローティングへ移動"
-            onPointerDown={(event) => {
-              if (event.pointerType === "mouse" && event.button !== 0) return;
-              event.preventDefault();
-              event.currentTarget.setPointerCapture(event.pointerId);
-              const railBounds = railRef.current?.getBoundingClientRect();
-              dragOffsetRef.current = railBounds
-                ? { x: event.clientX - railBounds.left, y: event.clientY - railBounds.top }
-                : { x: 24, y: 24 };
-              setDragTarget(placement);
-              setDragging(true);
-            }}
+            onPointerDown={startDrag}
             onPointerMove={handleDragMove}
             onPointerUp={finishDrag}
             onPointerCancel={() => setDragging(false)}
@@ -1780,18 +1829,7 @@ function TagEditor({
   );
 }
 
-function ImageViewer({
-  item,
-  source,
-  imageRef,
-  rotation,
-  doubleClickZoom,
-  shortcutsEnabled,
-  onLoadingChange,
-  onError,
-  onMetadata,
-  onContextMenu,
-}: {
+const ImageViewer = forwardRef<ImageZoomHandle, {
   item: MediaItem;
   source?: string;
   imageRef: React.RefObject<HTMLImageElement | null>;
@@ -1801,8 +1839,21 @@ function ImageViewer({
   onLoadingChange: (loading: boolean) => void;
   onError: (message: string | undefined) => void;
   onMetadata: (metadata: ViewerRuntimeMetadata) => void;
+  onZoomChange: (percent: number) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLDivElement>) => void;
-}) {
+}>(function ImageViewer({
+  item,
+  source,
+  imageRef,
+  rotation,
+  doubleClickZoom,
+  shortcutsEnabled,
+  onLoadingChange,
+  onError,
+  onMetadata,
+  onZoomChange,
+  onContextMenu,
+}, zoomHandleRef) {
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -1894,6 +1945,18 @@ function ImageViewer({
       y: 0,
     });
   }, [actualSizeZoom]);
+  const displayPercent = Math.max(1, Math.round(fitScale * viewport.zoom * 100));
+
+  useImperativeHandle(zoomHandleRef, () => ({
+    zoomIn: () => setZoom(viewport.zoom * IMAGE_ZOOM_STEP),
+    zoomOut: () => setZoom(viewport.zoom / IMAGE_ZOOM_STEP),
+    showActualSize: resetActualSize,
+    showEntireImage: resetFit,
+  }), [resetActualSize, resetFit, setZoom, viewport.zoom]);
+
+  useEffect(() => {
+    onZoomChange(displayPercent);
+  }, [displayPercent, onZoomChange]);
 
   useEffect(() => {
     onError(undefined);
@@ -1959,7 +2022,6 @@ function ImageViewer({
   }, [resetActualSize, resetFit, setZoom, shortcutsEnabled, viewport.zoom]);
 
   if (!displaySource) return <Unavailable icon="image">画像を開けません。</Unavailable>;
-  const displayPercent = Math.max(1, Math.round(fitScale * viewport.zoom * 100));
   const pannable = clampOffset(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, viewport.zoom);
   const canPan = pannable.x > 0 || pannable.y > 0;
   return (
@@ -2071,41 +2133,9 @@ function ImageViewer({
           onError("画像ファイルを読み込めませんでした。ファイルが移動・削除されていないか確認してください。");
         }}
       />
-      <div
-        className="pv-image-zoom-controls"
-        role="toolbar"
-        aria-label="画像の拡大縮小"
-        onPointerDown={(event) => event.stopPropagation()}
-        onDoubleClick={(event) => event.stopPropagation()}
-        onWheel={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          aria-label="縮小（-）"
-          title="縮小（-）"
-          onClick={() => setZoom(viewport.zoom / IMAGE_ZOOM_STEP)}
-        >
-          −
-        </button>
-        <output title="画像本来の大きさに対する表示倍率">{displayPercent}%</output>
-        <button
-          type="button"
-          aria-label="拡大（+）"
-          title="拡大（+）"
-          onClick={() => setZoom(viewport.zoom * IMAGE_ZOOM_STEP)}
-        >
-          ＋
-        </button>
-        <button type="button" className="is-text" title="等倍表示（1）" onClick={resetActualSize}>
-          等倍
-        </button>
-        <button type="button" className="is-text" title="画面に合わせる（0）" onClick={resetFit}>
-          フィット
-        </button>
-      </div>
     </div>
   );
-}
+});
 
 function VideoViewer({
   item,
@@ -3411,6 +3441,7 @@ export function MediaViewer({
   const viewerShellRef = useRef<HTMLElement>(null);
   const viewerBackdropRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const imageZoomRef = useRef<ImageZoomHandle>(null);
   const videoRef = useRef<VideoHandle>(null);
   const bookCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const [favorite, setFavoriteState] = useState(item?.isFavorite ?? false);
@@ -3465,7 +3496,12 @@ export function MediaViewer({
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const { isFullscreen, changeFullscreen } = useViewerFullscreen(viewerShellRef);
-  const menusHidden = isFullscreen;
+  const [chromeHidden, setChromeHidden] = useState(false);
+  const menusHidden = isFullscreen || chromeHidden;
+  const [imageZoomPercent, setImageZoomPercent] = useState(100);
+  const updateImageZoomPercent = useCallback((percent: number) => {
+    setImageZoomPercent((current) => current === percent ? current : percent);
+  }, []);
   const [runtimeMetadata, setRuntimeMetadata] = useState<ViewerRuntimeMetadata>({});
   const [infoLayout, setInfoLayout] = useState<ViewerInfoLayout>("right");
   const [railLayout, setRailLayout] = useState<ViewerPanelPlacement>("bottom");
@@ -3929,6 +3965,7 @@ export function MediaViewer({
     setTags(item.tags);
     setPageCount(item.pageCount ?? 0);
     setRuntimeMetadata({});
+    setImageZoomPercent(100);
     setPageIndex(0);
     setSeekAnchors([]);
     setRotation(0);
@@ -3955,6 +3992,8 @@ export function MediaViewer({
         if (isFullscreen) {
           event.preventDefault();
           void changeFullscreen(false).catch((caught: unknown) => setError(String(caught)));
+        } else if (chromeHidden) {
+          setChromeHidden(false);
         } else if (showGifFrames) closeGifFrames();
         else if (showTagEditor) setShowTagEditor(false);
         else if (showBookmarkList) setShowBookmarkList(false);
@@ -3993,7 +4032,7 @@ export function MediaViewer({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [bookBinding, bookViewMode, changeFullscreen, isFullscreen, closeGifFrames, imageContextMenu, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds, viewerRailOpen]);
+  }, [bookBinding, bookViewMode, changeFullscreen, chromeHidden, isFullscreen, closeGifFrames, imageContextMenu, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds, viewerRailOpen]);
 
   useEffect(() => {
     if (!message) return;
@@ -4035,6 +4074,7 @@ export function MediaViewer({
 
   const toggleFullscreen = () => {
     setError(undefined);
+    if (!isFullscreen) setChromeHidden(false);
     void changeFullscreen().catch((fullscreenError: unknown) => {
       setError(fullscreenError instanceof Error ? fullscreenError.message : "全画面表示を開始できませんでした。");
     });
@@ -4499,6 +4539,7 @@ export function MediaViewer({
     if (isImage) {
       return (
         <ImageViewer
+          ref={imageZoomRef}
           item={item}
           source={source}
           imageRef={imageRef}
@@ -4508,6 +4549,7 @@ export function MediaViewer({
           onLoadingChange={handleMediaLoading}
           onError={setError}
           onMetadata={updateRuntimeMetadata}
+          onZoomChange={updateImageZoomPercent}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -4574,11 +4616,11 @@ export function MediaViewer({
           <button
             type="button"
             className="pv-viewer-menu-restore"
-            aria-label="全画面表示を終了（Esc）"
-            title="全画面表示を終了（Esc）"
-            onClick={toggleFullscreen}
+            aria-label={isFullscreen ? "全画面表示を終了（Esc）" : "すべての枠を表示（Esc）"}
+            title={isFullscreen ? "全画面表示を終了（Esc）" : "すべての枠を表示（Esc）"}
+            onClick={isFullscreen ? toggleFullscreen : () => setChromeHidden(false)}
           >
-            <Icon name="fullscreenExit" />
+            <Icon name={isFullscreen ? "fullscreenExit" : "eye"} />
           </button>
         )}
         {isImage && imageContextMenu && (
@@ -4606,7 +4648,18 @@ export function MediaViewer({
                 {ratingLabel(ageRating)}
               </span>
             </div>
-            <h2 id="pv-viewer-title">{item.name}</h2>
+            <div className="pv-viewer-title-line">
+              <h2 id="pv-viewer-title">{item.name}</h2>
+              {isImage && (
+                <div className="pv-viewer-title-zoom" role="toolbar" aria-label="画像の拡大縮小">
+                  <button type="button" aria-label="縮小（-）" title="縮小（-）" onClick={() => imageZoomRef.current?.zoomOut()}>−</button>
+                  <output title="画像本来の大きさに対する表示倍率">{imageZoomPercent}%</output>
+                  <button type="button" aria-label="拡大（+）" title="拡大（+）" onClick={() => imageZoomRef.current?.zoomIn()}>＋</button>
+                  <button type="button" title="等倍表示（1）" onClick={() => imageZoomRef.current?.showActualSize()}>等倍</button>
+                  <button type="button" title="画像全体を表示（0）" onClick={() => imageZoomRef.current?.showEntireImage()}>全体</button>
+                </div>
+              )}
+            </div>
             <p title={item.path}>{item.path}</p>
           </div>
           <div className="pv-viewer-header-meta">
@@ -4629,6 +4682,13 @@ export function MediaViewer({
                 icon={isFullscreen ? "fullscreenExit" : "fullscreen"}
                 label={isFullscreen ? "全画面表示を終了（Esc）" : "全画面表示"}
                 onClick={toggleFullscreen}
+              />
+            )}
+            {!isFullscreen && (
+              <IconControl
+                icon="eyeOff"
+                label="すべての枠を非表示（Escで戻す）"
+                onClick={() => setChromeHidden(true)}
               />
             )}
             <IconControl icon="close" label="閉じる" onClick={onClose} />

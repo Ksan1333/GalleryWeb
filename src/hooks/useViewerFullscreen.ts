@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauriRuntime } from "../services/native";
 
@@ -9,6 +10,26 @@ export function useViewerFullscreen(shell: RefObject<HTMLElement | null>) {
   const initial = useRef<boolean | undefined>(undefined);
   const mounted = useRef(true);
   const changed = useRef(false);
+  const placement = useRef<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    maximized: boolean;
+  } | undefined>(undefined);
+  const restorePlacement = async () => {
+    const saved = placement.current;
+    if (!saved) return;
+    const window = getCurrentWindow();
+    if (saved.maximized) {
+      await window.maximize();
+    } else {
+      if (await window.isMaximized()) await window.unmaximize();
+      await window.setSize(new PhysicalSize(saved.width, saved.height));
+      await window.setPosition(new PhysicalPosition(saved.x, saved.y));
+    }
+    placement.current = undefined;
+  };
   useEffect(() => {
     mounted.current = true;
     let active = true;
@@ -37,7 +58,10 @@ export function useViewerFullscreen(shell: RefObject<HTMLElement | null>) {
       stop?.();
       if (isTauriRuntime()) {
         queue.current = queue.current.then(async () => {
-          if (changed.current) await getCurrentWindow().setFullscreen(initial.current ?? false);
+          if (changed.current) {
+            await getCurrentWindow().setFullscreen(initial.current ?? false);
+            if (!(initial.current ?? false)) await restorePlacement();
+          }
         }).catch(() => undefined);
       } else if (document.fullscreenElement === element) {
         void document.exitFullscreen().catch(() => undefined);
@@ -53,7 +77,22 @@ export function useViewerFullscreen(shell: RefObject<HTMLElement | null>) {
         const current = await window.isFullscreen();
         if (initial.current === undefined) initial.current = current;
         const next = enabled ?? !current;
+        if (next && !current) {
+          const [position, size, maximized] = await Promise.all([
+            window.outerPosition(),
+            window.outerSize(),
+            window.isMaximized(),
+          ]);
+          placement.current = {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+            maximized,
+          };
+        }
         await window.setFullscreen(next);
+        if (!next && current) await restorePlacement();
         changed.current = true;
         if (mounted.current) setFullscreen(next);
       });

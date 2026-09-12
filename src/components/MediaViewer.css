@@ -221,6 +221,55 @@
   white-space: nowrap;
 }
 
+.pv-viewer-title-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.pv-viewer-title-line h2 {
+  min-width: 0;
+  flex: 1;
+}
+
+.pv-viewer-title-zoom {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 8px;
+  padding: 2px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.pv-viewer-title-zoom button {
+  height: 24px;
+  min-width: 25px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 6px;
+  color: #cdbddd;
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.pv-viewer-title-zoom button:hover {
+  color: #fff;
+  background: rgba(173, 121, 241, .17);
+}
+
+.pv-viewer-title-zoom output {
+  min-width: 48px;
+  color: #b9a8c8;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .pv-viewer-header-meta {
   display: flex;
   flex: 0 0 auto;
@@ -360,55 +409,6 @@
   pointer-events: none;
   will-change: transform;
   -webkit-user-drag: none;
-}
-
-.pv-image-zoom-controls {
-  position: absolute;
-  z-index: 6;
-  bottom: 14px;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  border: 1px solid rgba(222, 199, 255, 0.17);
-  border-radius: 13px;
-  padding: 4px;
-  background: rgba(17, 12, 24, 0.78);
-  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.32);
-  transform: translateX(-50%);
-  backdrop-filter: blur(12px);
-}
-
-.pv-image-zoom-controls button {
-  display: grid;
-  min-width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 0;
-  border-radius: 8px;
-  padding: 0 8px;
-  color: #e7d9fa;
-  background: transparent;
-  cursor: pointer;
-  font-size: 15px;
-  font-weight: 800;
-}
-
-.pv-image-zoom-controls button.is-text {
-  font-size: 9px;
-}
-
-.pv-image-zoom-controls button:hover {
-  color: #fff;
-  background: rgba(173, 121, 241, 0.18);
-}
-
-.pv-image-zoom-controls output {
-  min-width: 53px;
-  color: #bdadca;
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
 }
 
 .pv-media-info-panel {
@@ -3161,12 +3161,12 @@
 .pv-viewer-content-grid:not(.info-panel-collapsed).info-at-bottom { padding-bottom: min(42%, 420px); }
 .pv-viewer-content-grid:not(.rail-panel-collapsed).rail-at-right { padding-right: 174px; }
 .pv-viewer-content-grid:not(.rail-panel-collapsed).rail-at-left { padding-left: 174px; }
-.pv-viewer-content-grid:not(.rail-panel-collapsed).rail-at-top { padding-top: 134px; }
-.pv-viewer-content-grid:not(.rail-panel-collapsed).rail-at-bottom { padding-bottom: 134px; }
+.pv-viewer-content-grid:not(.rail-panel-collapsed).rail-at-top { padding-top: 154px; }
+.pv-viewer-content-grid:not(.rail-panel-collapsed).rail-at-bottom { padding-bottom: 154px; }
 .pv-viewer-content-grid:not(.info-panel-collapsed).info-at-right:not(.rail-panel-collapsed).rail-at-right { padding-right: 544px; }
 .pv-viewer-content-grid:not(.info-panel-collapsed).info-at-left:not(.rail-panel-collapsed).rail-at-left { padding-left: 544px; }
-.pv-viewer-content-grid:not(.info-panel-collapsed).info-at-top:not(.rail-panel-collapsed).rail-at-top { padding-top: min(64%, 554px); }
-.pv-viewer-content-grid:not(.info-panel-collapsed).info-at-bottom:not(.rail-panel-collapsed).rail-at-bottom { padding-bottom: min(64%, 554px); }
+.pv-viewer-content-grid:not(.info-panel-collapsed).info-at-top:not(.rail-panel-collapsed).rail-at-top { padding-top: min(64%, 574px); }
+.pv-viewer-content-grid:not(.info-panel-collapsed).info-at-bottom:not(.rail-panel-collapsed).rail-at-bottom { padding-bottom: min(64%, 574px); }
 
 .pv-viewer-panel-placement {
   display: flex;
@@ -3254,13 +3254,37 @@
   flex: 0 0 36px;
   border-radius: 50%;
 }
+.pv-media-info-panel.is-collapsed:not(.placement-floating) {
+  border-radius: 13px;
+}
+.pv-media-info-panel.is-collapsed:is(.placement-top, .placement-bottom) {
+  width: 190px;
+  height: 48px;
+}
+.pv-media-info-panel.is-collapsed:is(.placement-left, .placement-right) {
+  width: 48px;
+  height: 150px;
+}
+.pv-media-info-panel.is-collapsed:not(.placement-floating) > header {
+  width: 100%;
+  height: 100%;
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+.pv-media-info-panel.is-collapsed:is(.placement-left, .placement-right) > header {
+  flex-direction: column-reverse;
+}
+.pv-media-info-panel.is-collapsed:not(.placement-floating) > header > .pv-media-info-drag-handle {
+  display: grid;
+  flex: 1;
+}
 
 .pv-viewer-rail {
   position: absolute;
   z-index: 17;
   display: grid;
   width: auto;
-  height: 124px;
+  height: 144px;
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr);
@@ -3274,7 +3298,7 @@
 .pv-viewer-rail.placement-bottom { right: 10px; bottom: 10px; left: 10px; }
 .pv-viewer-rail.placement-left { top: 10px; bottom: 10px; left: 10px; width: 164px; height: auto; }
 .pv-viewer-rail.placement-right { top: 10px; right: 10px; bottom: 10px; width: 164px; height: auto; }
-.pv-viewer-rail.placement-floating { width: min(430px, calc(100% - 24px)); height: 132px; }
+.pv-viewer-rail.placement-floating { width: min(430px, calc(100% - 24px)); height: 152px; }
 .pv-viewer-rail-toolbar {
   display: flex;
   min-width: 0;
@@ -3315,7 +3339,9 @@
   touch-action: none;
 }
 .pv-viewer-rail-drag-handle i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; box-shadow: 0 6px currentColor; }
-.pv-viewer-rail-scroll { padding: 6px 12px; }
+.pv-viewer-rail-scroll { padding: 6px 12px 18px; }
+.pv-viewer-rail-track { height: 84px; }
+.pv-viewer-rail-track > button { height: 84px; }
 .pv-viewer-rail:is(.placement-left, .placement-right) .pv-viewer-rail-toolbar {
   flex-wrap: wrap;
   align-content: center;
@@ -3363,6 +3389,84 @@
 }
 .pv-viewer-rail.is-collapsed .pv-viewer-rail-toggle span,
 .pv-viewer-rail.is-collapsed :is(.pv-viewer-panel-placement, .pv-viewer-rail-drag-handle, .pv-viewer-rail-scroll, .pv-viewer-rail-count) { display: none; }
+
+.pv-viewer-rail.is-collapsed:not(.placement-floating) {
+  border-radius: 13px;
+}
+.pv-viewer-rail.is-collapsed:is(.placement-top, .placement-bottom) {
+  width: 190px;
+  height: 48px;
+}
+.pv-viewer-rail.is-collapsed:is(.placement-left, .placement-right) {
+  width: 48px;
+  height: 150px;
+}
+.pv-viewer-rail.is-collapsed:not(.placement-floating) .pv-viewer-rail-toolbar {
+  width: 100%;
+  height: 100%;
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+.pv-viewer-rail.is-collapsed:is(.placement-left, .placement-right) .pv-viewer-rail-toolbar {
+  flex-direction: column;
+}
+.pv-viewer-rail.is-collapsed:not(.placement-floating) .pv-viewer-rail-toggle {
+  width: auto;
+  flex: 1;
+  border-radius: 9px;
+  padding: 0 7px;
+}
+.pv-viewer-rail.is-collapsed:is(.placement-top, .placement-bottom) .pv-viewer-rail-toggle span {
+  display: inline;
+}
+.pv-viewer-rail.is-collapsed:not(.placement-floating) .pv-viewer-rail-drag-handle {
+  display: grid;
+  width: 32px;
+  flex: 0 0 32px;
+  margin: 0;
+}
+
+:is(.pv-media-info-panel, .pv-viewer-rail).is-dragging {
+  overflow: visible;
+}
+:is(.pv-media-info-panel, .pv-viewer-rail).is-dragging::after {
+  display: none;
+}
+:is(.pv-media-info-panel, .pv-viewer-rail).is-dragging::before {
+  position: fixed;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  border: 2px dashed rgba(167, 211, 255, .78);
+  border-radius: 18px;
+  color: #f3f9ff;
+  background: rgba(54, 132, 207, .22);
+  box-shadow: inset 0 0 60px rgba(62, 154, 239, .12);
+  font-size: 13px;
+  font-weight: 850;
+  pointer-events: none;
+  backdrop-filter: blur(5px);
+  content: "○ フローティングへ移動";
+}
+:is(.pv-media-info-panel, .pv-viewer-rail).is-dragging.drag-target-top::before {
+  top: 9%; right: 22%; left: 22%; height: 20%;
+  content: "○ 上へ移動";
+}
+:is(.pv-media-info-panel, .pv-viewer-rail).is-dragging.drag-target-bottom::before {
+  right: 22%; bottom: 9%; left: 22%; height: 20%;
+  content: "○ 下へ移動";
+}
+:is(.pv-media-info-panel, .pv-viewer-rail).is-dragging.drag-target-left::before {
+  top: 18%; bottom: 18%; left: 2%; width: 24%;
+  content: "○ 左へ移動";
+}
+:is(.pv-media-info-panel, .pv-viewer-rail).is-dragging.drag-target-right::before {
+  top: 18%; right: 2%; bottom: 18%; width: 24%;
+  content: "○ 右へ移動";
+}
+:is(.pv-media-info-panel, .pv-viewer-rail).is-dragging.drag-target-floating::before {
+  top: 31%; left: 31%; width: 38%; height: 32%;
+}
 
 @media (max-width: 760px) {
   .pv-media-info-panel.placement-left,

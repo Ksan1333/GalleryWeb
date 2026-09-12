@@ -8,6 +8,7 @@ mod diagnostics;
 mod external_input;
 mod feature_vectors;
 mod file_browser;
+mod filename_order;
 mod folder_watcher;
 mod in_app_browser;
 mod media_folders;
@@ -32,7 +33,6 @@ pub fn probe_vlc_runtime(directory: &std::path::Path) -> Result<(), String> {
 }
 
 use std::{
-    cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     fs,
     io::{Read, Seek},
@@ -1416,46 +1416,8 @@ fn archive_page_entries_from_archive<R: Read + Seek>(
             size: entry.size(),
         });
     }
-    pages.sort_by(|left, right| natural_name_cmp(&left.name, &right.name));
+    pages.sort_by(|left, right| crate::filename_order::explorer_name_cmp(&left.name, &right.name));
     Ok(pages)
-}
-
-fn natural_name_cmp(left: &str, right: &str) -> Ordering {
-    let left_bytes = left.as_bytes();
-    let right_bytes = right.as_bytes();
-    let (mut left_index, mut right_index) = (0, 0);
-    while left_index < left_bytes.len() && right_index < right_bytes.len() {
-        if left_bytes[left_index].is_ascii_digit() && right_bytes[right_index].is_ascii_digit() {
-            let left_start = left_index;
-            let right_start = right_index;
-            while left_index < left_bytes.len() && left_bytes[left_index].is_ascii_digit() {
-                left_index += 1;
-            }
-            while right_index < right_bytes.len() && right_bytes[right_index].is_ascii_digit() {
-                right_index += 1;
-            }
-            let left_number = left[left_start..left_index].trim_start_matches('0');
-            let right_number = right[right_start..right_index].trim_start_matches('0');
-            let length_order = left_number.len().cmp(&right_number.len());
-            if length_order != Ordering::Equal {
-                return length_order;
-            }
-            let number_order = left_number.cmp(right_number);
-            if number_order != Ordering::Equal {
-                return number_order;
-            }
-        } else {
-            let character_order = left_bytes[left_index]
-                .to_ascii_lowercase()
-                .cmp(&right_bytes[right_index].to_ascii_lowercase());
-            if character_order != Ordering::Equal {
-                return character_order;
-            }
-            left_index += 1;
-            right_index += 1;
-        }
-    }
-    left_bytes.len().cmp(&right_bytes.len())
 }
 
 fn safe_cache_id(value: &str) -> String {

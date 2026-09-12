@@ -1893,7 +1893,10 @@ fn reconcile_candidates(
             existing = find_relocated_scan_media(&transaction, candidate, &mut directory_entries)?;
         }
         let media_id;
+        let previously_managed_kind;
         if let Some(existing) = existing {
+            previously_managed_kind =
+                matches!(existing.media_kind.as_str(), "video" | "pdf" | "zip");
             let changed = existing.root_id != root.id
                 || existing.relative_path != candidate.relative_path
                 || existing.file_name != candidate.file_name
@@ -1937,6 +1940,7 @@ fn reconcile_candidates(
                 updated += 1;
             }
         } else {
+            previously_managed_kind = false;
             media_id = Uuid::new_v4().to_string();
             transaction
                 .execute(
@@ -1962,6 +1966,18 @@ fn reconcile_candidates(
             inserted += 1;
         }
         seen_ids.insert(media_id.clone());
+        if previously_managed_kind
+            || matches!(candidate.media_kind.as_str(), "video" | "pdf" | "zip")
+        {
+            sync_parent_folder_tag(
+                &transaction,
+                &media_id,
+                &candidate.media_kind,
+                &candidate.relative_path,
+                &root.display_name,
+                scan_token,
+            )?;
+        }
         if let Some(identity) = &candidate.file_identity {
             transaction
                 .prepare_cached(
@@ -2020,6 +2036,93 @@ fn reconcile_candidates(
         missing: nonnegative_u64(missing),
         issues,
     })
+}
+
+/// Books and videos carry one scanner-managed tag for their current parent
+/// folder. Reconciliation updates this atomically with a move, so an item moved
+/// from A to B cannot retain the stale A relationship.
+fn sync_parent_folder_tag(
+    connection: &Connection,
+    media_id: &str,
+    media_kind: &str,
+    relative_path: &str,
+    root_display_name: &str,
+    now: i64,
+) -> Result<(), String> {
+    let parent_name = matches!(media_kind, "video" | "pdf" | "zip")
+        .then(|| {
+            Path::new(relative_path)
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(root_display_name)
+                .trim()
+        })
+        .filter(|name| !name.is_empty());
+    let (existing_name, existing_count) = connection
+        .query_row(
+            "SELECT MIN(t.name), COUNT(*)
+             FROM media_tags mt JOIN tags t ON t.id = mt.tag_id
+             WHERE mt.media_id = ?1 AND mt.source = 'folder'",
+            [media_id],
+            |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .map_err(|error| format!("Failed to inspect current parent-folder tag: {error}"))?;
+    if existing_count == 1 && parent_name.is_some_and(|name| existing_name.as_deref() == Some(name))
+    {
+        return Ok(());
+    }
+    connection
+        .execute(
+            "DELETE FROM media_tags WHERE media_id = ?1 AND source = 'folder'",
+            [media_id],
+        )
+        .map_err(|error| format!("Failed to clear previous parent-folder tag: {error}"))?;
+    let Some(parent_name) = parent_name else {
+        return Ok(());
+    };
+
+    let tag_id = connection
+        .query_row(
+            "SELECT id FROM tags WHERE name = ?1 COLLATE NOCASE",
+            [parent_name],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Failed to find parent-folder tag: {error}"))?
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    connection
+        .execute(
+            "INSERT INTO tags(id, name, color, created_at, updated_at)
+             VALUES (?1, ?2, '#6f9be8', ?3, ?3)
+             ON CONFLICT(name) DO NOTHING",
+            params![tag_id, parent_name, now],
+        )
+        .map_err(|error| format!("Failed to create parent-folder tag: {error}"))?;
+    let resolved_tag_id = connection
+        .query_row(
+            "SELECT id FROM tags WHERE name = ?1 COLLATE NOCASE",
+            [parent_name],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| format!("Failed to resolve parent-folder tag: {error}"))?;
+    connection
+        .execute(
+            "UPDATE tags SET name = ?2, updated_at = ?3 WHERE id = ?1 AND name <> ?2",
+            params![resolved_tag_id, parent_name, now],
+        )
+        .map_err(|error| format!("Failed to refresh parent-folder tag name: {error}"))?;
+    connection
+        .execute(
+            "INSERT INTO media_tags(media_id, tag_id, source, confidence, ai_category, created_at)
+             VALUES (?1, ?2, 'folder', NULL, NULL, ?3)
+             ON CONFLICT(media_id, tag_id) DO UPDATE SET
+                source = 'folder', confidence = NULL, ai_category = NULL",
+            params![media_id, resolved_tag_id, now],
+        )
+        .map_err(|error| format!("Failed to link parent-folder tag: {error}"))?;
+    Ok(())
 }
 
 /// Reuse a catalog ID only when the filesystem proves that this is the same
@@ -3398,6 +3501,56 @@ mod tests {
             list_book_bookmarks(&state, &renamed.id).unwrap()[0].page_index,
             17
         );
+    }
+
+    #[test]
+    fn books_and_videos_follow_their_current_parent_folder_tag() {
+        let directory = tempdir().unwrap();
+        let folder_a = directory.path().join("A");
+        let folder_b = directory.path().join("B");
+        fs::create_dir(&folder_a).unwrap();
+        fs::create_dir(&folder_b).unwrap();
+        fs::write(folder_a.join("book.zip"), b"book").unwrap();
+        fs::write(folder_a.join("clip.mp4"), b"video").unwrap();
+        fs::write(folder_a.join("image.jpg"), b"image").unwrap();
+        let state = initialized_state();
+        let root = add_library_root(&state, directory.path().to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+
+        let initial = list_media_items(&state, None).unwrap();
+        for item in initial.iter().filter(|item| item.file_name != "image.jpg") {
+            assert_eq!(
+                item.tags
+                    .iter()
+                    .filter(|tag| tag.source.as_deref() == Some("folder"))
+                    .map(|tag| tag.name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["A"]
+            );
+        }
+        assert!(
+            initial
+                .iter()
+                .find(|item| item.file_name == "image.jpg")
+                .unwrap()
+                .tags
+                .is_empty()
+        );
+
+        fs::rename(folder_a.join("book.zip"), folder_b.join("book.zip")).unwrap();
+        fs::rename(folder_a.join("clip.mp4"), folder_b.join("clip.mp4")).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        let moved = list_media_items(&state, None).unwrap();
+        for item in moved.iter().filter(|item| item.file_name != "image.jpg") {
+            let managed = item
+                .tags
+                .iter()
+                .filter(|tag| tag.source.as_deref() == Some("folder"))
+                .collect::<Vec<_>>();
+            assert_eq!(managed.len(), 1);
+            assert_eq!(managed[0].name, "B");
+            assert!(!item.tags.iter().any(|tag| tag.name == "A"));
+        }
     }
 
     #[test]

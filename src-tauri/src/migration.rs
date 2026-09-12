@@ -2012,7 +2012,17 @@ mod tests {
             )
             .unwrap();
         assert!(favorite);
-        assert_eq!(tag_count, 1);
+        // The migration archive itself is a cataloged ZIP book in this fixture,
+        // so it also carries its scanner-managed current-parent-folder tag.
+        assert_eq!(tag_count, 2);
+        let folder_tag_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM media_tags WHERE source = 'folder'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(folder_tag_count, 1);
         assert_eq!(migration_count, 1);
     }
 

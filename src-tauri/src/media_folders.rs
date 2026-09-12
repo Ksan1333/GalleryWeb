@@ -172,9 +172,10 @@ pub fn list_media_folders(
         }
         folders.sort_by(|left, right| {
             left.root_id.cmp(&right.root_id).then_with(|| {
-                left.relative_folder
-                    .to_lowercase()
-                    .cmp(&right.relative_folder.to_lowercase())
+                crate::filename_order::explorer_name_cmp(
+                    &left.relative_folder,
+                    &right.relative_folder,
+                )
             })
         });
     }
@@ -311,9 +312,7 @@ fn refresh_physical_root_cache(
         })
         .collect::<Vec<_>>();
     folders.sort_by(|left, right| {
-        left.relative_folder
-            .to_lowercase()
-            .cmp(&right.relative_folder.to_lowercase())
+        crate::filename_order::explorer_name_cmp(&left.relative_folder, &right.relative_folder)
     });
     folders.dedup_by(|left, right| {
         left.relative_folder

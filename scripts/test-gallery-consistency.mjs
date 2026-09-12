@@ -94,7 +94,7 @@ test("selection mode has an explicit open action and Enter never toggles selecti
   const node = find((node) => ts.isVariableDeclaration(node) && node.name.getText() === "MediaCard");
   const card = execute(`module.exports = ${node.initializer.getText()};`, {
     memo: (component) => component, useEffect() {}, markFirstMediaCard() {}, markFirstMediaThumbnail() {},
-    Icon: "Icon", LazyMediaVisual: "LazyMediaVisual", mediaKindLabel: () => "画像",
+    Icon: "Icon", LazyMediaVisual: "LazyMediaVisual", mediaKindLabel: () => "画像", mediaKindIcon: () => "image",
     formatBytes: () => "100 B", formatDate: () => "today", formatDuration: () => "0:01",
   });
   const calls = [];
