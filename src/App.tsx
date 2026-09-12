@@ -42,7 +42,6 @@ import {
   type ViewerInfoLayout,
 } from "./services/native";
 import {
-  rememberFolderNavigation,
   setFolderFavorite,
   type FolderActivityRecord,
 } from "./services/folderActivity";
@@ -63,7 +62,6 @@ const ReleaseHistory = lazy(() => import("./components/ReleaseHistory").then((mo
 const AiAnalysisMonitor = lazy(() => import("./components/AiAnalysisMonitor").then((module) => ({ default: module.AiAnalysisMonitor })));
 const FirstRunTutorial = lazy(() => import("./components/FirstRunTutorial").then((module) => ({ default: module.FirstRunTutorial })));
 const MediaCollection = lazy(() => import("./components/MediaCollection").then((module) => ({ default: module.MediaCollection })));
-const FolderMediaCollection = lazy(() => import("./components/MediaCollection").then((module) => ({ default: module.FolderMediaCollection })));
 const FileSystemBrowser = lazy(() => import("./components/FileSystemBrowser").then((module) => ({ default: module.FileSystemBrowser })));
 const AIAnalysisModal = lazy(() => import("./components/AIAnalysisModal").then((module) => ({ default: module.AIAnalysisModal })));
 const FavoriteSitesPage = lazy(() => import("./components/ExtraPages").then((module) => ({ default: module.FavoriteSitesPage })));
@@ -81,7 +79,7 @@ const DiagnosticSettings = lazy(() => import("./components/DiagnosticSettings").
 const SearchAndGroupingSettings = lazy(() => import("./components/SearchAndGroupingSettings").then((module) => ({ default: module.SearchAndGroupingSettings })));
 const ViewerControlSettings = lazy(() => import("./components/ViewerControlSettings").then((module) => ({ default: module.ViewerControlSettings })));
 
-type Section = "home" | "gallery" | "allFolders" | "folders" | "videos" | "books" | "favorites" | "sites" | "creators" | "references" | "downloads" | "settings" | "about" | "changelog";
+type Section = "home" | "gallery" | "allFolders" | "favorites" | "sites" | "creators" | "references" | "downloads" | "settings" | "about" | "changelog";
 
 type NavigationItem = {
   id: Section;
@@ -89,7 +87,6 @@ type NavigationItem = {
   icon: IconName;
 };
 
-const IMAGE_MEDIA_KINDS: MediaKind[] = ["image", "gif"];
 const VIDEO_MEDIA_KINDS: MediaKind[] = ["video"];
 const BOOK_MEDIA_KINDS: MediaKind[] = ["pdf", "archive"];
 
@@ -104,14 +101,6 @@ const navigationGroups: Array<{ label?: string; items: NavigationItem[] }> = [
       { id: "gallery", label: "ギャラリー", icon: "gallery" },
       { id: "allFolders", label: "全フォルダー", icon: "folder" },
       { id: "favorites", label: "お気に入り", icon: "star" },
-    ],
-  },
-  {
-    label: "メディア",
-    items: [
-      { id: "folders", label: "画像", icon: "image" },
-      { id: "videos", label: "動画", icon: "video" },
-      { id: "books", label: "ブック", icon: "book" },
     ],
   },
   {
@@ -138,9 +127,6 @@ const sectionDetails: Record<Section, { eyebrow: string; description: string }> 
   home: { eyebrow: "LIBRARY DESK", description: "今日のライブラリをひと目で確認" },
   gallery: { eyebrow: "GALLERY", description: "優先フォルダーのメディアを探す" },
   allFolders: { eyebrow: "MEDIA FOLDERS", description: "すべての形式をフォルダー単位で移動" },
-  folders: { eyebrow: "IMAGES", description: "画像とGIFをフォルダー単位で整理" },
-  videos: { eyebrow: "VIDEOS", description: "動画をフォルダー単位で整理" },
-  books: { eyebrow: "BOOKS", description: "PDF・ZIP・CBZをまとめて読む" },
   favorites: { eyebrow: "FAVORITES", description: "大切なメディアへすぐ戻る" },
   sites: { eyebrow: "WEB LINKS", description: "よく使うサイトをまとめて開く" },
   creators: { eyebrow: "CREATORS", description: "お気に入りの作者を追いかける" },
@@ -190,7 +176,7 @@ function App() {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [nativeAvailable, setNativeAvailable] = useState(false);
   const [error, setError] = useState<string>();
-  const [viewerInfoLayout, setViewerInfoLayout] = useState<ViewerInfoLayout>("sidebar");
+  const [viewerInfoLayout, setViewerInfoLayout] = useState<ViewerInfoLayout>("right");
   const [savingViewerInfoLayout, setSavingViewerInfoLayout] = useState(false);
   const [galleryMediaVisibility, setGalleryMediaVisibility] = useState<GalleryMediaVisibility>(
     defaultGalleryMediaVisibility,
@@ -230,10 +216,11 @@ function App() {
   const activeLabel = navigation.find((item) => item.id === section)?.label ?? "ホーム";
   const activeDetails = sectionDetails[section];
   const galleryMediaKinds = useMemo<MediaKind[]>(() => [
-    ...IMAGE_MEDIA_KINDS,
+    ...(galleryMediaVisibility.image ? (["image"] as MediaKind[]) : []),
+    ...(galleryMediaVisibility.gif ? (["gif"] as MediaKind[]) : []),
     ...(galleryMediaVisibility.video ? VIDEO_MEDIA_KINDS : []),
     ...(galleryMediaVisibility.book ? BOOK_MEDIA_KINDS : []),
-  ], [galleryMediaVisibility.book, galleryMediaVisibility.video]);
+  ], [galleryMediaVisibility.book, galleryMediaVisibility.gif, galleryMediaVisibility.image, galleryMediaVisibility.video]);
 
   useEffect(() => {
     let active = true;
@@ -254,9 +241,10 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    void getJsonPreference<ViewerInfoLayout>("viewerInfoLayout", "sidebar").then((result) => {
+    void getJsonPreference<ViewerInfoLayout>("viewerInfoLayout", "right").then((result) => {
       if (!active) return;
-      setViewerInfoLayout(result.data === "bottomSheet" ? "bottomSheet" : "sidebar");
+      const value = result.data;
+      setViewerInfoLayout(value === "top" || value === "bottom" || value === "left" || value === "floating" ? value : "right");
       if (result.error) setError(result.error);
     });
     return () => { active = false; };
@@ -265,7 +253,7 @@ function App() {
   useEffect(() => {
     const handleViewerLayout = (event: Event) => {
       const detail = (event as CustomEvent<ViewerInfoLayout>).detail;
-      if (detail === "sidebar" || detail === "bottomSheet") {
+      if (detail === "top" || detail === "bottom" || detail === "left" || detail === "right" || detail === "floating") {
         setViewerInfoLayout(detail);
       }
     };
@@ -301,7 +289,7 @@ function App() {
   }, []);
 
   const changeViewerInfoLayout = useCallback(async (value: string) => {
-    const next: ViewerInfoLayout = value === "bottomSheet" ? "bottomSheet" : "sidebar";
+    const next: ViewerInfoLayout = value === "top" || value === "bottom" || value === "left" || value === "floating" ? value : "right";
     const previous = viewerInfoLayout;
     setViewerInfoLayout(next);
     setSavingViewerInfoLayout(true);
@@ -640,24 +628,14 @@ function App() {
   }, [section, catalogRefreshVersion, summary.favorites, startupWorkReady]);
 
   const openHomeFolder = useCallback((folder: FolderActivityRecord) => {
-    if (folder.navigationKey === "all") {
-      const root = roots.find((entry) => entry.id === folder.rootId);
-      if (!root) {
-        setError("フォルダーの場所を確認できません。接続状態を確認して更新してください。");
-        return;
-      }
-      setExternalMediaBatch(undefined);
-      setExplorerNavigationRequest({ requestId: crypto.randomUUID(), path: joinFolderPath(root.path, folder.relativePath) });
-      navigateToSection("allFolders");
+    const root = roots.find((entry) => entry.id === folder.rootId);
+    if (!root) {
+      setError("フォルダーの場所を確認できません。接続状態を確認して更新してください。");
       return;
     }
-    rememberFolderNavigation(folder.navigationKey, {
-      rootId: folder.rootId,
-      path: folder.relativePath,
-    });
-    navigateToSection(folder.navigationKey === "images"
-      ? "folders"
-      : folder.navigationKey);
+    setExternalMediaBatch(undefined);
+    setExplorerNavigationRequest({ requestId: crypto.randomUUID(), path: joinFolderPath(root.path, folder.relativePath) });
+    navigateToSection("allFolders");
   }, [navigateToSection, roots]);
 
   const removeHomeFolderFavorite = useCallback((folder: FolderActivityRecord) => {
@@ -839,9 +817,9 @@ function App() {
             <header><span><p className="kicker">LIBRARY PULSE</p><h2>ライブラリ</h2></span><Icon name="database" /></header>
             <div className="pulse-total"><strong>{summary.totalItems.toLocaleString("ja-JP")}</strong><span>件のメディア</span></div>
             <div className="pulse-list">
-              <button type="button" onClick={() => navigateToSection("folders")}><span><i className="pulse-dot image" />画像・GIF</span><strong>{(summary.images + summary.gifs).toLocaleString("ja-JP")}</strong></button>
-              <button type="button" onClick={() => navigateToSection("videos")}><span><i className="pulse-dot video" />動画</span><strong>{summary.videos.toLocaleString("ja-JP")}</strong></button>
-              <button type="button" onClick={() => navigateToSection("books")}><span><i className="pulse-dot book" />ブック</span><strong>{summary.books.toLocaleString("ja-JP")}</strong></button>
+              <button type="button" onClick={() => navigateToSection("gallery")}><span><i className="pulse-dot image" />画像・GIF</span><strong>{(summary.images + summary.gifs).toLocaleString("ja-JP")}</strong></button>
+              <button type="button" onClick={() => navigateToSection("gallery")}><span><i className="pulse-dot video" />動画</span><strong>{summary.videos.toLocaleString("ja-JP")}</strong></button>
+              <button type="button" onClick={() => navigateToSection("gallery")}><span><i className="pulse-dot book" />ブック</span><strong>{summary.books.toLocaleString("ja-JP")}</strong></button>
               <button type="button" onClick={() => navigateToSection("favorites")}><span><i className="pulse-dot favorite" />お気に入り</span><strong>{summary.favorites.toLocaleString("ja-JP")}</strong></button>
             </div>
             <footer><span><Icon name="hardDrive" /><small>使用容量</small><strong>{formatBytes(summary.storageBytes)}</strong></span><span><Icon name="folder" /><small>読み込み先</small><strong>{summary.libraryRoots} フォルダー</strong></span></footer>
@@ -849,12 +827,10 @@ function App() {
         </div>
 
         <section className="quick-access-section" aria-labelledby="quick-access-title">
-          <div className="section-heading"><div><p className="kicker">JUMP BACK IN</p><h2 id="quick-access-title">すぐに開く</h2></div><span className="section-note">優先フォルダー・メディア別の一覧</span></div>
+          <div className="section-heading"><div><p className="kicker">JUMP BACK IN</p><h2 id="quick-access-title">すぐに開く</h2></div><span className="section-note">ギャラリーとフォルダーを開く</span></div>
           <div className="quick-access-grid">
-            <button type="button" data-tone="violet" onClick={() => navigateToSection("gallery")}><span><Icon name="gallery" /></span><div><small>GALLERY</small><strong>ギャラリー</strong><em>優先フォルダーのみ</em></div><Icon name="arrowRight" /></button>
-            <button type="button" data-tone="blue" onClick={() => navigateToSection("folders")}><span><Icon name="image" /></span><div><small>IMAGES</small><strong>画像</strong><em>{(summary.images + summary.gifs).toLocaleString("ja-JP")} 件</em></div><Icon name="arrowRight" /></button>
-            <button type="button" data-tone="rose" onClick={() => navigateToSection("videos")}><span><Icon name="video" /></span><div><small>VIDEOS</small><strong>動画</strong><em>{summary.videos.toLocaleString("ja-JP")} 件</em></div><Icon name="arrowRight" /></button>
-            <button type="button" data-tone="amber" onClick={() => navigateToSection("books")}><span><Icon name="book" /></span><div><small>BOOKS</small><strong>ブック</strong><em>{summary.books.toLocaleString("ja-JP")} 件</em></div><Icon name="arrowRight" /></button>
+            <button type="button" data-tone="violet" onClick={() => navigateToSection("gallery")}><span><Icon name="gallery" /></span><div><small>GALLERY</small><strong>ギャラリー</strong><em>表示形式とメディア種別を右クリックで変更</em></div><Icon name="arrowRight" /></button>
+            <button type="button" data-tone="blue" onClick={() => navigateToSection("allFolders")}><span><Icon name="folderWindows" /></span><div><small>EXPLORER</small><strong>全フォルダー</strong><em>PC内をフォルダー順に閲覧</em></div><Icon name="arrowRight" /></button>
           </div>
         </section>
 
@@ -974,8 +950,11 @@ function App() {
             <SelectMenu
               value={viewerInfoLayout}
               options={[
-                { value: "sidebar", label: "右サイドバー", description: "右端へスナップ。閉じたまま下部へドラッグできます" },
-                { value: "bottomSheet", label: "レコメンドボトムシート", description: "初期非表示。自由移動し、右端でサイドバーへ変形します" },
+                { value: "top", label: "上" },
+                { value: "bottom", label: "下" },
+                { value: "left", label: "左" },
+                { value: "right", label: "右" },
+                { value: "floating", label: "フローティング" },
               ]}
               ariaLabel="ビュワーの情報表示"
               disabled={savingViewerInfoLayout}
@@ -1051,15 +1030,12 @@ function App() {
   function content() {
     if (!externalStartupChecked && !externalMediaBatch) return <div className="empty-panel" role="status">ファイルを確認しています…</div>;
     if (section === "home") return home();
-    if (section === "gallery") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="GALLERY" title="ギャラリー" description="優先フォルダー配下のメディアだけを表示します。動画・ブックの表示は設定で変更できます。" kinds={galleryMediaKinds} priorityOnly compactFileLayout advancedGallerySearch viewerIncludesAllMedia tagNavigation={tagGalleryNavigation} emptyTitle="優先フォルダーのメディアはまだありません" emptyDescription="全フォルダーで優先読み込みに追加するか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
+    if (section === "gallery") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="GALLERY" title="ギャラリー" description="優先フォルダー配下のメディアを統合表示します。右クリックで形式・表示・並び・グループ化を変更できます。" kinds={galleryMediaKinds} priorityOnly compactFileLayout advancedGallerySearch viewerIncludesAllMedia showMediaVisibilityMenu tagNavigation={tagGalleryNavigation} emptyTitle="表示対象のメディアはまだありません" emptyDescription="右クリックで表示する形式を確認するか、全フォルダーで優先読み込み対象を追加してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "allFolders") return <FileSystemBrowser refreshVersion={catalogRefreshVersion} onDataChanged={refreshSummary} onPriorityChanged={refreshPriorityScope}
       navigationRequest={explorerNavigationRequest}
       openRequest={externalTarget ? { requestId: externalTarget.request.requestId, item: externalTarget.item } : undefined}
       onOpenRequestReady={() => setExternalVisualReadyId(externalMediaBatch?.requestId)}
       onOpenRequestClose={() => { setExternalMediaBatch(undefined); setExplorerNavigationRequest(undefined); void refreshSummary(); }} />;
-    if (section === "folders") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="images" eyebrow="IMAGES" title="画像" description="画像とGIFだけを、元のフォルダー構成ごとに表示します。" kinds={IMAGE_MEDIA_KINDS} emptyTitle="画像フォルダーはまだありません" emptyDescription="全フォルダーから画像やGIFのある場所を開いてください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
-    if (section === "videos") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="videos" eyebrow="VIDEOS" title="動画" description="動画をフォルダー単位で整理して表示します。" kinds={VIDEO_MEDIA_KINDS} emptyTitle="動画はまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
-    if (section === "books") return <FolderMediaCollection refreshVersion={catalogRefreshVersion} navigationKey="books" eyebrow="BOOKS" title="ブック" description="PDFとZIP/CBZをフォルダー単位で整理して表示します。" kinds={BOOK_MEDIA_KINDS} emptyTitle="ブックはまだありません" emptyDescription="全フォルダーから開くか、優先フォルダーを指定してください。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "favorites") return <MediaCollection refreshVersion={catalogRefreshVersion} eyebrow="FAVORITES" title="お気に入り" description="星を付けたメディアを、形式で絞り込んで表示します。" compactFileLayout favoritesOnly showFavoriteKindFilter emptyTitle="お気に入りはまだありません" emptyDescription="メディアカードの星ボタンで追加できます。" onAddFolder={() => void addFolder()} onDataChanged={refreshSummary} />;
     if (section === "sites") return <FavoriteSitesPage />;
     if (section === "creators") return <FavoriteCreatorsPage />;

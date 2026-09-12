@@ -9,22 +9,22 @@ if (Test-Path -LiteralPath $taskCargoBin) {
 
 Push-Location $projectRoot
 try {
-    & npm.cmd run build
+    & pnpm.cmd run build
     if ($LASTEXITCODE -ne 0) {
         throw "Frontend build failed with exit code $LASTEXITCODE"
     }
 
-    & npm.cmd run perf:budget
+    & pnpm.cmd run perf:budget
     if ($LASTEXITCODE -ne 0) {
         throw "Static performance budget check failed with exit code $LASTEXITCODE"
     }
 
-    & npm.cmd run test:themes
+    & pnpm.cmd run test:themes
     if ($LASTEXITCODE -ne 0) {
         throw "Theme regression check failed with exit code $LASTEXITCODE"
     }
 
-    & npm.cmd run test:layout
+    & pnpm.cmd run test:layout
     if ($LASTEXITCODE -ne 0) {
         throw "Layout contract check failed with exit code $LASTEXITCODE"
     }

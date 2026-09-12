@@ -169,7 +169,7 @@ export function FileSystemBrowser({ refreshVersion, onDataChanged, onPriorityCha
     </section>}
     {loading && !listing && <p role="status">フォルダーを読み込んでいます…</p>}
     {listing && !listing.path && <div className="filesystem-drives">{listing.folders.map((folder) => <button key={folder.path} type="button" onClick={() => navigate(folder.path)}><Icon name="folderWindows" /><strong>{folder.displayName}</strong><small>{folder.path}</small></button>)}</div>}
-    {listing?.rootId && <section className="filesystem-content" aria-label="フォルダーとメディア"><MediaCollection key={`${listing.rootId}:${listing.relativeFolder}`} embedded compactFileLayout advancedGallerySearch viewerIncludesAllMedia showLeadingFolderCounts={false}
+    {listing?.rootId && <section className="filesystem-content" aria-label="フォルダーとメディア"><MediaCollection key={`${listing.rootId}:${listing.relativeFolder}`} embedded compactFileLayout advancedGallerySearch viewerIncludesAllMedia forcedSortOrder="name-asc" showLeadingFolderCounts={false}
       eyebrow="FOLDER" title={listing.path ?? "フォルダー"} description="フォルダーとメディア" kinds={EXPLORER_MEDIA_KINDS}
       openRequest={sameExplorerPath(listing.path ?? undefined, path) ? currentOpenRequest : undefined} onOpenRequestClose={onOpenRequestClose}
       deferCatalog={deferFolder || !loadedListing}

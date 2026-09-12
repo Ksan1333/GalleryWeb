@@ -28,13 +28,14 @@ const contracts = [
   [!mediaCollection.includes('from "./AdjacentSimilarityGroups"'), "adjacent-similarity section is not mounted"],
   [!mediaCollection.includes('from "./FolderGroupsPanel"'), "virtual folder groups are not mounted in the image browser"],
   [mediaCollection.includes('className="favorite-folders-panel"'), "image browser exposes favorite folders"],
-  [mediaCollection.includes("displayPreferences.groupMode") && mediaCollection.includes('label="グループ化"') && mediaCollection.includes("galleryGroupOptions.map"), "gallery grouping is available from the toolbar and context menu"],
+  [mediaCollection.includes("displayPreferences.groupMode") && mediaCollection.includes("!showMediaVisibilityMenu") && mediaCollection.includes("galleryGroupOptions.map"), "gallery grouping is removed from the top toolbar and retained in the context menu"],
   [displayPreferences.includes('groupMode: "none"') && displaySettings.includes("更新日単位の見出し"), "gallery grouping is opt-in and configurable by day, month, or year"],
-  [mediaCollection.includes('navigationKey === "images" || navigationKey === "videos" || navigationKey === "books"'), "image, video, and book folders use compact media tiles"],
+  [!app.includes('id: "folders"') && !app.includes('id: "videos"') && !app.includes('id: "books"'), "separate image, video, and book navigation pages are removed"],
   [app.indexOf('id: "gallery"') < app.indexOf('id: "allFolders"') && app.indexOf('id: "allFolders"') < app.indexOf('id: "favorites"'), "all-media folder navigation sits between gallery and favorites"],
-  [app.includes("<FileSystemBrowser") && folderActivity.includes('"all" | "images"'), "all-folder navigation uses the on-demand filesystem browser"],
+  [app.includes("<FileSystemBrowser"), "all-folder navigation uses the on-demand filesystem browser"],
   [/section === "gallery"[^;]*kinds=\{galleryMediaKinds\}[^;]*\bcompactFileLayout\b/.test(app), "main gallery uses the same compact layout as folder media galleries"],
-  [appCss.includes(".compact-file-gallery .root-folder-card"), "image, video, and book root folders use compact rows"],
+  [mediaCollection.includes("showMediaVisibilityMenu") && mediaCollection.includes('role="menuitemcheckbox"'), "gallery context menu selects visible media formats"],
+  [displayPreferences.includes('"extra-large-icons"') && displayPreferences.includes('"details"') && mediaCollection.includes("galleryViewOptions.map"), "gallery context menu exposes Explorer-style view modes"],
   [mediaCollection.includes('name="folderWindows"') && appCss.includes(".folder-windows-front"), "folder browsers use an Explorer-style two-tone folder icon"],
   [mediaCollection.includes('"--gallery-visual-size"') && appCss.includes("aspect-ratio: 1"), "gallery thumbnails use a square visual frame"],
   [mediaCollection.includes("targetCardWidth = galleryCompactCardWidths[size]") && displayPreferences.includes("medium: 112") && mediaCollection.includes("rowHeight: squareSize + VIRTUAL_GAP") && appCss.includes(".compact-file-layout .virtual-media-card.is-compact-file") && appCss.includes("aspect-ratio: 1;"), "gallery tiles honor density and remain square including thumbnail and text"],
@@ -42,6 +43,9 @@ const contracts = [
   [mediaViewer.includes("<figure key={slot}>") && !mediaViewer.includes("const renderTasks: RenderTask[]"), "book paging preserves the current canvas while the next page is prepared"],
   [bookViewerSettings.includes('binding: "right"') && mediaViewer.includes('return binding === "right" ? pages.reverse() : pages'), "book spreads default to page 2 on the left and page 1 on the right"],
   [viewerCss.includes("width: calc(100vw - 16px)") && viewerCss.includes("height: calc(100dvh - 16px)"), "viewer scales with the application window"],
+  [mediaViewer.includes("useState(false)") && mediaViewer.includes('className={`pv-viewer-rail placement-${placement}'), "viewer list and recommendations start hidden"],
+  [mediaViewer.includes('value: "top"') && mediaViewer.includes('value: "bottom"') && mediaViewer.includes('value: "left"') && mediaViewer.includes('value: "right"') && mediaViewer.includes('value: "floating"'), "viewer panels support all five placements"],
+  [viewerCss.includes(".pv-viewer-rail.is-collapsed") && viewerCss.includes("border-radius: 50%") && viewerCss.includes(".pv-media-info-panel.is-collapsed"), "minimized floating viewer panels use round icons"],
 ];
 
 const failures = contracts.filter(([passed]) => !passed);

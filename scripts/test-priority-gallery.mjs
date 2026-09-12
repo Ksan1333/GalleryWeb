@@ -114,8 +114,7 @@ function appContent(section) {
     explorerNavigationRequest: undefined, externalTarget: undefined,
     externalStartupChecked: true, externalMediaBatch: undefined,
     refreshSummary() {}, refreshPriorityScope() {}, addFolder() {},
-    MediaCollection: "MediaCollection", FileSystemBrowser: "FileSystemBrowser", FolderMediaCollection: "FolderMediaCollection",
-    IMAGE_MEDIA_KINDS: ["image", "gif"], VIDEO_MEDIA_KINDS: ["video"], BOOK_MEDIA_KINDS: ["pdf", "archive"],
+    MediaCollection: "MediaCollection", FileSystemBrowser: "FileSystemBrowser",
   });
 }
 function baseQuery(props) {
@@ -180,7 +179,10 @@ test("actual App/collection JSX restricts only the normal gallery, including vie
   assert.equal(favorites.priorityOnly, false);
   assert.equal((await api.getMediaPageInfo(favorites)).data.totalCount, 440);
   assert.equal((await api.listMediaItems(favorites)).data.length, 440);
-  for (const section of ["folders", "videos", "books"]) assert.notEqual(appContent(section).props.priorityOnly, true);
+  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  for (const section of ["folders", "videos", "books"]) {
+    assert.ok(!appSource.includes(`id: "${section}"`), `${section} must not remain as a separate navigation page`);
+  }
   assert.deepEqual(calls.filter(({ command }) => command === "list_media_items").map(({ args }) => args.query.priorityOnly), [true, false, false]);
 });
 

@@ -3,24 +3,16 @@ import { useEffect, useState } from "react";
 import {
   defaultGalleryDisplayPreferences,
   galleryGroupOptions,
+  galleryViewOptions,
   loadGalleryDisplayPreferences,
   mergeGalleryDisplayPreferences,
   saveGalleryDisplayPreferences,
   type GalleryDisplayPreferences,
-  type GalleryGridSize,
   type GallerySortOrder,
 } from "../services/galleryDisplayPreferences";
 import "./GalleryDisplaySettings.css";
 
 export * from "../services/galleryDisplayPreferences";
-
-const sizeOptions: Array<{ value: GalleryGridSize; label: string; detail: string }> = [
-  { value: "minimum", label: "最小", detail: "最も多くのファイルを表示" },
-  { value: "small", label: "小", detail: "小さめのファイル表示" },
-  { value: "medium", label: "中", detail: "標準のコンパクト表示" },
-  { value: "large", label: "大", detail: "サムネイルを大きく表示" },
-  { value: "maximum", label: "最大", detail: "最も大きなサムネイル" },
-];
 
 const ratingOptions: Array<{ value: GalleryDisplayPreferences["ageRating"]; label: string }> = [
   { value: "", label: "すべて" },
@@ -71,17 +63,16 @@ export function GalleryDisplaySettings() {
   return (
     <div className="gallery-display-settings">
       <div className="gallery-display-setting-row">
-        <span><strong>サムネイルサイズ</strong><small>すべてのギャラリーへ反映します。</small></span>
+        <span><strong>表示形式</strong><small>Windowsエクスプローラーと同じ種類から選べます。</small></span>
         <div className="gallery-display-segments">
-          {sizeOptions.map((option) => (
+          {galleryViewOptions.map((option) => (
             <button
               type="button"
               key={option.value}
-              className={preferences.gridSize === option.value ? "active" : ""}
-              aria-pressed={preferences.gridSize === option.value}
+              className={preferences.viewMode === option.value ? "active" : ""}
+              aria-pressed={preferences.viewMode === option.value}
               disabled={saving}
-              title={option.detail}
-              onClick={() => void update({ gridSize: option.value })}
+              onClick={() => void update({ viewMode: option.value })}
             >
               {option.label}
             </button>

@@ -61,8 +61,8 @@ function installFixture() {
   const state = window.__fixture = {unexpected:[], calls:[], playCalls:0, pauseCalls:0, callbacks:{}, listeners:{}, callbackId:0,
     playback:{state:'playing',message:'',time:60,duration:120,width:640,height:360,volume:.5,muted:false,autoReduced:false}};
   state.makeItem = (i, kind='video') => ({id:`${kind==='archive'?'book':'video'}-${i}`,rootId:'fixture-root',
-    relativePath:`${['1','10','2'][i]}.${kind==='archive'?'zip':'webm'}`,path:`E:/Fixture/${['1','10','2'][i]}.${kind==='archive'?'zip':'webm'}`,
-    name:`${['1','10','2'][i]}.${kind==='archive'?'zip':'webm'}`,kind,sizeBytes:4096,width:640,height:360,
+    relativePath:`${['1','2','10'][i]}.${kind==='archive'?'zip':'webm'}`,path:`E:/Fixture/${['1','2','10'][i]}.${kind==='archive'?'zip':'webm'}`,
+    name:`${['1','2','10'][i]}.${kind==='archive'?'zip':'webm'}`,kind,sizeBytes:4096,width:640,height:360,
     durationSeconds:120,pageCount:2,isFavorite:true,ageRating:'SFW',tags:[{id:'tag1',name:'fixture',color:'#448844',source:'ai',confidence:.8}],
     modifiedAt:'2026-09-06T00:00:00Z',thumbnailPath:svg});
   const times = new WeakMap(), paused = new WeakMap();
@@ -155,12 +155,18 @@ try {
   await page.locator('.root-folder-main').click();
   await page.locator('[data-media-id="video-0"]').click();
   await page.locator('.pv-video-surface > canvas').waitFor();
+  assert.equal(await page.locator('.pv-media-info-panel.is-collapsed').count(), 1,
+    'recommendations start hidden');
+  assert.equal(await page.locator('.pv-viewer-rail.is-collapsed').count(), 1,
+    'the viewer list starts hidden');
+  await page.getByRole('button',{name:'情報とレコメンドを開く'}).click();
+  await page.getByRole('button',{name:'メディア一覧を開く'}).click();
   await page.locator('.pv-media-info-list dd').first().waitFor();
   await page.waitForFunction(() => !document.querySelector('.pv-viewer-page-loading'));
   assert.equal(await page.locator('.pv-viewer-page-loading').count(), 0,
     'a playing video must not keep the full-screen loading overlay visible');
-  assert.deepEqual(await page.locator('.pv-viewer-rail-name').allTextContents(),['1.webm','10.webm','2.webm'],
-    'the video gallery and indexed viewer rail share SQL name order');
+  assert.deepEqual(await page.locator('.pv-viewer-rail-name').allTextContents(),['1.webm','2.webm','10.webm'],
+    'the video gallery and indexed viewer rail share Explorer natural-name order');
   await page.evaluate(()=>{
     window.__fixture.playback.autoReduced=true;
     window.__fixture.playback.volume=.31;
@@ -189,9 +195,9 @@ try {
       for(const s of themed.filter(s=>s.selector.startsWith('.pv-media-'))) assert.ok(!s.missing&&s.ratio>=4.5,`${preset}: ${JSON.stringify(s)}`);
     }
     await page.evaluate(()=>window.__theme('light'));
-    await page.evaluate(()=>document.querySelector('.pv-media-info-panel').classList.add('is-collapsed','is-dragging','drag-target-bottomSheet'));
+    await page.evaluate(()=>document.querySelector('.pv-media-info-panel').classList.add('is-collapsed','is-dragging','drag-target-bottom'));
     for(const s of await page.evaluate(contrastSamples)) assert.ok(!s.missing&&s.ratio>=4.5,`floating panel: ${JSON.stringify(s)}`);
-    await page.evaluate(()=>document.querySelector('.pv-media-info-panel').classList.remove('is-collapsed','is-dragging','drag-target-bottomSheet'));
+    await page.evaluate(()=>document.querySelector('.pv-media-info-panel').classList.remove('is-collapsed','is-dragging','drag-target-bottom'));
   }
   const surface=page.locator('.pv-video-surface');
   const time=()=>page.evaluate(()=>window.__fixture.playback.time);

@@ -2143,6 +2143,22 @@ button:disabled {
   width: 12px;
   height: 12px;
 }
+.gallery-context-options .gallery-context-checkbox {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  place-items: center;
+  border: 1px solid rgba(207, 177, 244, .36);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .16);
+}
+.gallery-context-options button.active .gallery-context-checkbox {
+  border-color: rgba(217, 181, 255, .78);
+  color: #fff;
+  background: #8750bd;
+}
+.gallery-context-options .gallery-context-checkbox svg { width: 10px; height: 10px; }
 .gallery-media-visibility-heading {
   margin-top: 18px;
 }
@@ -3931,6 +3947,60 @@ textarea {
 }
 .compact-file-layout .mixed-folder-favorite { width: 25px; height: 25px; top: 4px; right: 4px; border-radius: 7px; }
 .compact-file-layout .mixed-folder-favorite svg { width: 12px; height: 12px; }
+
+/* Explorer-compatible list and details modes keep the virtualized catalog,
+   but use compact file rows instead of square tiles. */
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .virtual-media-card.is-compact-file,
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .mixed-folder-card {
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: 6px;
+}
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .virtual-media-card.is-compact-file .media-open,
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .mixed-folder-card {
+  display: grid;
+  height: 100%;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: center;
+  aspect-ratio: auto;
+}
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .virtual-media-card.is-compact-file .media-visual,
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .mixed-folder-card .folder-visual {
+  width: 34px;
+  height: 34px;
+  margin-left: 4px;
+  border-radius: 4px;
+}
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .virtual-media-card.is-compact-file .media-copy,
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .mixed-folder-card > div:last-child {
+  padding: 3px 42px 3px 9px;
+}
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .virtual-media-card.is-compact-file .media-copy strong,
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .mixed-folder-card strong {
+  font-size: 10px;
+  line-height: 14px;
+}
+.compact-file-layout:is(.view-mode-list, .view-mode-details) :is(.age-rating-badge, .duration-badge, .kind-badge, .media-type-label, .folder-item-count) {
+  display: none;
+}
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .mixed-folder-favorite,
+.compact-file-layout:is(.view-mode-list, .view-mode-details) .virtual-media-card.is-compact-file .media-card-actions {
+  top: 5px;
+  right: 5px;
+}
+.compact-file-layout.view-mode-details .virtual-media-card.is-compact-file .media-copy,
+.compact-file-layout.view-mode-details .mixed-folder-card > div:last-child {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, .55fr);
+  align-items: center;
+  gap: 16px;
+}
+.compact-file-layout.view-mode-details .virtual-media-card.is-compact-file .media-copy > span,
+.compact-file-layout.view-mode-details .mixed-folder-card > div:last-child > span {
+  margin: 0;
+  text-align: right;
+}
 
 @media (max-width: 680px) {
   .favorite-folder-list { grid-template-columns: 1fr; }

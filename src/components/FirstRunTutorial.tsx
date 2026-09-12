@@ -66,7 +66,7 @@ const tutorialSteps: TutorialStep[] = [
     eyebrow: "STEP 02 · GALLERY",
     title: "ギャラリーを自分好みに整理",
     description:
-      "左のメニューから全体ギャラリー、画像、動画、ブックへ移動できます。フォルダー階層もそのまま辿れます。",
+      "左のギャラリーに画像・GIF・動画・ブックを統合表示します。右クリックで表示する形式や表示方法を選べます。フォルダー階層は全フォルダーからそのまま辿れます。",
     icon: "gallery",
     accent: "blue",
     points: [

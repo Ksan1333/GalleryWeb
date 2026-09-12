@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
-import { setJsonPreference } from "../services/native";
 import {
   defaultGalleryMediaVisibility,
-  galleryMediaVisibilityEvent,
-  galleryMediaVisibilityKey,
   loadGalleryMediaVisibility,
+  saveGalleryMediaVisibility,
   type GalleryMediaVisibility,
 } from "../services/galleryMediaVisibility";
 import "./BookViewerSettings.css";
@@ -29,22 +27,37 @@ export function GalleryMediaSettings() {
     setSettings(next);
     setSaving(true);
     setError(undefined);
-    const result = await setJsonPreference(galleryMediaVisibilityKey, next);
+    const result = await saveGalleryMediaVisibility(next);
     setSaving(false);
-    if (!result.data || result.error) {
+    if (!result.saved || result.error) {
       setSettings(previous);
       setError(result.error ?? "ギャラリーの表示設定を保存できませんでした。");
       return;
     }
-    window.dispatchEvent(new CustomEvent(galleryMediaVisibilityEvent, { detail: next }));
   }
 
   return (
     <div className="book-viewer-settings">
       <label className="book-setting-row">
         <span>
+          <strong>画像をギャラリーに表示</strong>
+          <small>JPG・PNG・WebPなどの静止画を表示します。</small>
+        </span>
+        <input type="checkbox" checked={settings.image} disabled={saving} onChange={(event) => void update({ ...settings, image: event.target.checked })} />
+        <i aria-hidden="true" />
+      </label>
+      <label className="book-setting-row">
+        <span>
+          <strong>GIFをギャラリーに表示</strong>
+          <small>アニメーションGIFを表示します。</small>
+        </span>
+        <input type="checkbox" checked={settings.gif} disabled={saving} onChange={(event) => void update({ ...settings, gif: event.target.checked })} />
+        <i aria-hidden="true" />
+      </label>
+      <label className="book-setting-row">
+        <span>
           <strong>動画をギャラリーに表示</strong>
-          <small>オフにしても「動画」画面には引き続き表示されます。</small>
+          <small>動画ファイルを統合ギャラリーに表示します。</small>
         </span>
         <input
           type="checkbox"

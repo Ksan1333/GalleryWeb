@@ -93,6 +93,7 @@ import {
   defaultGalleryDisplayPreferences,
   galleryCompactCardWidths,
   galleryGroupOptions,
+  galleryViewOptions,
   galleryDisplayPreferencesEvent,
   loadGalleryDisplayPreferences,
   mergeGalleryDisplayPreferences,
@@ -102,7 +103,16 @@ import {
   type GalleryGridSize,
   type GalleryGroupMode,
   type GallerySortOrder,
+  type GalleryViewMode,
 } from "../services/galleryDisplayPreferences";
+import {
+  defaultGalleryMediaVisibility,
+  galleryMediaVisibilityEvent,
+  loadGalleryMediaVisibility,
+  normalizeGalleryMediaVisibility,
+  saveGalleryMediaVisibility,
+  type GalleryMediaVisibility,
+} from "../services/galleryMediaVisibility";
 import {
   EmptyState,
   LoadingPanel,
@@ -127,6 +137,8 @@ type MediaCollectionProps = {
   showFavoriteKindFilter?: boolean;
   advancedGallerySearch?: boolean;
   viewerIncludesAllMedia?: boolean;
+  showMediaVisibilityMenu?: boolean;
+  forcedSortOrder?: GallerySortOrder;
   emptyTitle: string;
   emptyDescription: string;
   initialSearch?: string;
@@ -1037,7 +1049,22 @@ function addBoundedMediaPage(
   );
 }
 
-function gridMetrics(size: GalleryGridSize, width: number, compactFileLayout = false): GridMetrics {
+function gridMetrics(
+  size: GalleryGridSize,
+  width: number,
+  compactFileLayout = false,
+  viewMode: GalleryViewMode = "medium-icons",
+): GridMetrics {
+  if (viewMode === "details") {
+    return { columns: 1, rowHeight: 46, visualHeight: 34 };
+  }
+  if (viewMode === "list") {
+    return {
+      columns: Math.max(1, Math.floor(Math.max(1, width) / 320)),
+      rowHeight: 46,
+      visualHeight: 34,
+    };
+  }
   if (compactFileLayout) {
     const targetCardWidth = galleryCompactCardWidths[size];
     const availableWidth = Math.max(1, width);
@@ -1351,6 +1378,7 @@ const MediaCard = memo(function MediaCard({
 export function MediaCollection({
   eyebrow, title, description, kinds, favoritesOnly, showFavoriteKindFilter, emptyTitle, emptyDescription,
   advancedGallerySearch = false, viewerIncludesAllMedia = true, priorityOnly = false,
+  showMediaVisibilityMenu = false, forcedSortOrder,
   initialSearch = "", initialRootId, initialFolderPath, embedded = false,
   compactFileLayout = false, onBack,
   onNavigateFolderPath, leadingFolders = [], showLeadingFolderCounts = true, onOpenLeadingFolder, favoriteFolderKeys,
@@ -1366,6 +1394,7 @@ export function MediaCollection({
   const [favoriteKind, setFavoriteKind] = useState<FavoriteKindFilter>("");
   const [displayPreferences, setDisplayPreferences] = useState(defaultGalleryDisplayPreferences);
   const [displayPreferencesLoaded, setDisplayPreferencesLoaded] = useState(false);
+  const [mediaVisibility, setMediaVisibility] = useState(defaultGalleryMediaVisibility);
   const [catalogReadyQueryKey, setCatalogReadyQueryKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1430,8 +1459,10 @@ export function MediaCollection({
   }, []);
   const translateTag = useTagTranslations(!deferCatalog);
   const gridSize = displayPreferences.gridSize;
-  const { sortBy, sortDirection } = sortQuery(displayPreferences.sortOrder);
-  const groupMode: GalleryGroupMode = displayPreferences.groupMode;
+  const viewMode = displayPreferences.viewMode;
+  const effectiveSortOrder = forcedSortOrder ?? displayPreferences.sortOrder;
+  const { sortBy, sortDirection } = sortQuery(effectiveSortOrder);
+  const groupMode: GalleryGroupMode = forcedSortOrder ? "none" : displayPreferences.groupMode;
 
   useEffect(() => {
     selectedMediaRef.current = selectedMedia;
@@ -1501,6 +1532,24 @@ export function MediaCollection({
       window.removeEventListener(galleryDisplayPreferencesEvent, handlePreferences);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showMediaVisibilityMenu) return;
+    let active = true;
+    void loadGalleryMediaVisibility().then((loaded) => {
+      if (active) setMediaVisibility(loaded);
+    });
+    const handleVisibility = (event: Event) => {
+      setMediaVisibility(normalizeGalleryMediaVisibility(
+        (event as CustomEvent<Partial<GalleryMediaVisibility>>).detail,
+      ));
+    };
+    window.addEventListener(galleryMediaVisibilityEvent, handleVisibility);
+    return () => {
+      active = false;
+      window.removeEventListener(galleryMediaVisibilityEvent, handleVisibility);
+    };
+  }, [showMediaVisibilityMenu]);
 
   useEffect(() => {
     if (!advancedGallerySearch) return;
@@ -1842,8 +1891,8 @@ export function MediaCollection({
     );
   }, [leadingFolders, search]);
   const metrics = useMemo(
-    () => gridMetrics(gridSize, viewport.width, compactFileLayout),
-    [compactFileLayout, gridSize, viewport.width],
+    () => gridMetrics(gridSize, viewport.width, compactFileLayout, viewMode),
+    [compactFileLayout, gridSize, viewMode, viewport.width],
   );
   const leadingFolderRows = Math.ceil(visibleLeadingFolders.length / metrics.columns);
   const leadingFolderHeight = visibleLeadingFolders.length > 0
@@ -2677,13 +2726,13 @@ export function MediaCollection({
     event.preventDefault();
     event.stopPropagation();
     const width = 286;
-    const height = item ? 650 : 540;
+    const height = showMediaVisibilityMenu ? 780 : item ? 650 : 580;
     setContextMenu({
       x: Math.max(10, Math.min(event.clientX, window.innerWidth - width - 10)),
       y: Math.max(10, Math.min(event.clientY, window.innerHeight - height - 10)),
       item,
     });
-  }, []);
+  }, [showMediaVisibilityMenu]);
 
   const updateDisplayPreferences = useCallback(async (
     patch: Partial<GalleryDisplayPreferences>,
@@ -2698,6 +2747,25 @@ export function MediaCollection({
       setError(result.error);
     }
   }, [displayPreferences]);
+
+  const updateMediaVisibility = useCallback(async (
+    key: keyof GalleryMediaVisibility,
+    checked: boolean,
+  ) => {
+    const previous = mediaVisibility;
+    const next = { ...previous, [key]: checked };
+    if (!Object.values(next).some(Boolean)) {
+      setError("表示するメディア形式を1つ以上選択してください。");
+      return;
+    }
+    setMediaVisibility(next);
+    setContextMenu(undefined);
+    const result = await saveGalleryMediaVisibility(next);
+    if (!result.saved) {
+      setMediaVisibility(previous);
+      setError(result.error);
+    }
+  }, [mediaVisibility]);
 
   const updateItemAgeRating = useCallback(async (item: MediaItem, rating: AgeRating) => {
     setContextMenu(undefined);
@@ -3026,12 +3094,14 @@ export function MediaCollection({
             options={[{ value: "", label: "すべて" }, ...roots.map((root) => ({ value: root.id, label: root.displayName }))]}
           />
         )}
-        <StyledSelect
-          label="グループ化"
-          value={groupMode}
-          onChange={(value) => void updateDisplayPreferences({ groupMode: value as GalleryGroupMode })}
-          options={galleryGroupOptions}
-        />
+        {!showMediaVisibilityMenu && (
+          <StyledSelect
+            label="グループ化"
+            value={groupMode}
+            onChange={(value) => void updateDisplayPreferences({ groupMode: value as GalleryGroupMode })}
+            options={galleryGroupOptions}
+          />
+        )}
       </div>
       {selectionMode && (
         <div className="gallery-bulk-toolbar" role="toolbar" aria-label="選択したメディアの一括操作">
@@ -3184,7 +3254,7 @@ export function MediaCollection({
             <span>表示範囲だけを読み込み中 · {loadedItems.length.toLocaleString("ja-JP")} 件キャッシュ</span>
           </div>
           <div
-            className={`virtual-media-scroller grid-size-${gridSize}${compactFileLayout ? " compact-file-layout" : ""}`}
+            className={`virtual-media-scroller grid-size-${gridSize} view-mode-${viewMode}${compactFileLayout ? " compact-file-layout" : ""}`}
             ref={scrollerRef}
             style={{ "--gallery-visual-size": `${metrics.visualHeight}px` } as CSSProperties}
             onContextMenu={(event) => openGalleryContextMenu(event)}
@@ -3389,25 +3459,44 @@ export function MediaCollection({
               </div>
             </section>
           )}
+          {showMediaVisibilityMenu && (
+            <section>
+              <span>表示するメディア</span>
+              <div className="gallery-context-options">
+                {([
+                  ["image", "画像"],
+                  ["gif", "GIF"],
+                  ["video", "動画"],
+                  ["book", "ブック（PDF・ZIP・CBZ）"],
+                ] as const).map(([value, label]) => (
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={mediaVisibility[value]}
+                    className={mediaVisibility[value] ? "active" : ""}
+                    key={value}
+                    onClick={() => void updateMediaVisibility(value, !mediaVisibility[value])}
+                  >
+                    <span className="gallery-context-checkbox">{mediaVisibility[value] && <Icon name="check" />}</span>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
           <section>
-            <span>サムネイルサイズ</span>
+            <span>表示形式</span>
             <div className="gallery-context-options">
-              {([
-                ["minimum", "最小"],
-                ["small", "小"],
-                ["medium", "中"],
-                ["large", "大"],
-                ["maximum", "最大"],
-              ] as const).map(([value, label]) => (
+              {galleryViewOptions.map(({ value, label }) => (
                 <button
                   type="button"
                   role="menuitemradio"
-                  aria-checked={gridSize === value}
-                  className={gridSize === value ? "active" : ""}
+                  aria-checked={viewMode === value}
+                  className={viewMode === value ? "active" : ""}
                   key={value}
-                  onClick={() => void updateDisplayPreferences({ gridSize: value })}
+                  onClick={() => void updateDisplayPreferences({ viewMode: value })}
                 >
-                  {label}{gridSize === value && <Icon name="check" />}
+                  {label}{viewMode === value && <Icon name="check" />}
                 </button>
               ))}
             </div>
@@ -3443,12 +3532,12 @@ export function MediaCollection({
                 <button
                   type="button"
                   role="menuitemradio"
-                  aria-checked={displayPreferences.sortOrder === value}
-                  className={displayPreferences.sortOrder === value ? "active" : ""}
+                  aria-checked={effectiveSortOrder === value}
+                  className={effectiveSortOrder === value ? "active" : ""}
                   key={value}
                   onClick={() => void updateDisplayPreferences({ sortOrder: value })}
                 >
-                  {label}{displayPreferences.sortOrder === value && <Icon name="check" />}
+                  {label}{effectiveSortOrder === value && <Icon name="check" />}
                 </button>
               ))}
             </div>

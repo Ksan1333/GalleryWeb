@@ -455,8 +455,8 @@ pub fn list_media_items(
     };
     sql.push_str(&format!(
         " ORDER BY {sort_column} {sort_direction},
-                   m.file_name COLLATE NOCASE,
-                   m.relative_path COLLATE NOCASE,
+                   m.file_name COLLATE PIXVAULT_NATURAL,
+                   m.relative_path COLLATE PIXVAULT_NATURAL,
                    m.id
           LIMIT ? OFFSET ?"
     ));
@@ -502,7 +502,7 @@ pub fn list_media_items(
 
 fn media_sort_column(query: &MediaQuery) -> &'static str {
     match query.sort_by.as_deref() {
-        Some("name") => "m.file_name COLLATE NOCASE",
+        Some("name") => "m.file_name COLLATE PIXVAULT_NATURAL",
         Some("size") => "m.byte_size",
         Some("importedAt") => "m.first_seen_at",
         _ => "m.modified_at",
@@ -568,7 +568,7 @@ pub fn get_media_item_index(
                  WHERE {filter_sql} AND (
                     {sort_column} {comparison} ?{primary_parameter}
                     OR ({sort_column} = ?{primary_parameter} AND
-                        (m.file_name COLLATE NOCASE, m.relative_path COLLATE NOCASE, m.id)
+                        (m.file_name COLLATE PIXVAULT_NATURAL, m.relative_path COLLATE PIXVAULT_NATURAL, m.id)
                         < (?{}, ?{}, ?{})))",
                 primary_parameter + 1,
                 primary_parameter + 2,

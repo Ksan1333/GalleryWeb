@@ -11,7 +11,18 @@ export type MediaKind =
   | "unknown";
 
 export type AgeRating = "UNRATED" | "SFW" | "R15" | "R18";
-export type ViewerInfoLayout = "sidebar" | "bottomSheet";
+export type ViewerPanelPlacement = "top" | "bottom" | "left" | "right" | "floating";
+export type ViewerInfoLayout = ViewerPanelPlacement;
+
+export function normalizeViewerPanelPlacement(
+  value: unknown,
+  fallback: ViewerPanelPlacement = "right",
+): ViewerPanelPlacement {
+  if (value === "top" || value === "bottom" || value === "left" || value === "right" || value === "floating") return value;
+  if (value === "sidebar") return "right";
+  if (value === "bottomSheet") return "bottom";
+  return fallback;
+}
 
 export type RuntimeInfo = {
   appName: string;
@@ -496,7 +507,7 @@ export const defaultPreferences: UserPreferences = {
   nativeNotifications: true,
   thumbnailSize: "medium",
   defaultSort: "modifiedAt",
-  viewerInfoLayout: "sidebar",
+  viewerInfoLayout: "right",
   confirmBeforeRecycle: true,
   watchFolders: true,
   autoAnalyze: false,

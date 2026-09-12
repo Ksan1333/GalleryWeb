@@ -33,6 +33,7 @@ import {
   listTags,
   localAssetUrl,
   mediaAssetUrl,
+  normalizeViewerPanelPlacement,
   recycleMediaItem,
   revealMediaInExplorer,
   saveCapture,
@@ -50,6 +51,7 @@ import {
   type MediaQuery,
   type Tag,
   type ViewerInfoLayout,
+  type ViewerPanelPlacement,
 } from "../services/native";
 import { useCoordinatedThumbnail } from "../services/thumbnailCoordinator";
 import { useTagTranslations } from "../services/tagTranslations";
@@ -103,6 +105,7 @@ const MAX_BOOK_IMAGE_CACHE_ENTRIES = 18;
 const BOOK_WHEEL_COOLDOWN_MS = 260;
 const VIDEO_PLAYBACK_SAVE_DEBOUNCE_MS = 180;
 const VIEWER_INFO_LAYOUT_KEY = "viewerInfoLayout";
+const VIEWER_RAIL_LAYOUT_KEY = "viewerRailPlacement";
 const VIEWER_COLLECTION_PAGE_SIZE = 64;
 const VIEWER_COLLECTION_CACHE_MAX_ITEMS = 1_280;
 const RECOMMENDATION_COUNT = 6;
@@ -121,6 +124,59 @@ type ViewerRuntimeMetadata = {
   height?: number;
   durationSeconds?: number;
 };
+
+const VIEWER_PANEL_PLACEMENTS: Array<{
+  value: ViewerPanelPlacement;
+  label: string;
+  icon: IconName;
+  iconClassName?: string;
+}> = [
+  { value: "top", label: "上へ移動", icon: "arrowUp" },
+  { value: "bottom", label: "下へ移動", icon: "arrowUp", iconClassName: "pv-icon-down" },
+  { value: "left", label: "左へ移動", icon: "arrowLeft" },
+  { value: "right", label: "右へ移動", icon: "arrowRight" },
+  { value: "floating", label: "フローティング", icon: "wallpaper" },
+];
+
+function viewerPanelPlacementFromPoint(
+  clientX: number,
+  clientY: number,
+  bounds: DOMRect,
+): ViewerPanelPlacement {
+  const horizontalEdge = Math.min(120, bounds.width * .2);
+  const verticalEdge = Math.min(100, bounds.height * .2);
+  if (clientY <= bounds.top + verticalEdge) return "top";
+  if (clientY >= bounds.bottom - verticalEdge) return "bottom";
+  if (clientX <= bounds.left + horizontalEdge) return "left";
+  if (clientX >= bounds.right - horizontalEdge) return "right";
+  return "floating";
+}
+
+function ViewerPanelPlacementControls({
+  value,
+  onChange,
+}: {
+  value: ViewerPanelPlacement;
+  onChange: (value: ViewerPanelPlacement) => void;
+}) {
+  return (
+    <div className="pv-viewer-panel-placement" role="toolbar" aria-label="パネルの表示位置">
+      {VIEWER_PANEL_PLACEMENTS.map((placement) => (
+        <button
+          type="button"
+          key={placement.value}
+          className={value === placement.value ? "is-active" : undefined}
+          aria-pressed={value === placement.value}
+          aria-label={placement.label}
+          title={placement.label}
+          onClick={() => onChange(placement.value)}
+        >
+          <Icon name={placement.icon} className={placement.iconClassName} />
+        </button>
+      ))}
+    </div>
+  );
+}
 
 type ScoredMediaRecommendation = {
   item: MediaItem;
@@ -738,7 +794,7 @@ function MediaInfoSidebar({
 }) {
   const [dragging, setDragging] = useState(false);
   const [dragTarget, setDragTarget] = useState<ViewerInfoLayout>(layout);
-  const [floatingPosition, setFloatingPosition] = useState<{ x: number; y: number }>();
+  const [floatingPosition, setFloatingPosition] = useState({ x: 72, y: 72 });
   const panelRef = useRef<HTMLElement>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const translateTag = useTagTranslations();
@@ -768,14 +824,13 @@ function MediaInfoSidebar({
 
   const handleDragMove = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!dragging) return;
-    const container = panelRef.current?.parentElement;
-    const bounds = container?.getBoundingClientRect();
-    const rightEdge = bounds?.right ?? window.innerWidth;
-    const next = event.clientX >= rightEdge - 72 ? "sidebar" : "bottomSheet";
+    const bounds = panelRef.current?.parentElement?.getBoundingClientRect();
+    if (!bounds) return;
+    const next = viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds);
     setDragTarget(next);
-    if (!open && bounds && next === "bottomSheet") {
-      const panelWidth = 176;
-      const panelHeight = 42;
+    if (next === "floating") {
+      const panelWidth = open ? 320 : 48;
+      const panelHeight = open ? Math.min(520, bounds.height * .7) : 48;
       setFloatingPosition({
         x: Math.max(8, Math.min(
           event.clientX - bounds.left - dragOffsetRef.current.x,
@@ -793,24 +848,23 @@ function MediaInfoSidebar({
     if (!dragging) return;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     const bounds = panelRef.current?.parentElement?.getBoundingClientRect();
-    const finalTarget: ViewerInfoLayout =
-      event.clientX >= (bounds?.right ?? window.innerWidth) - 72 ? "sidebar" : "bottomSheet";
+    const finalTarget = bounds
+      ? viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds)
+      : dragTarget;
     setDragging(false);
     setDragTarget(finalTarget);
     if (finalTarget !== layout) onLayoutChange(finalTarget, !open);
   };
 
   const floatingStyle: React.CSSProperties | undefined =
-    !open && (layout === "bottomSheet" || (dragging && dragTarget === "bottomSheet"))
-      ? floatingPosition
-        ? {
-            left: floatingPosition.x,
-            top: floatingPosition.y,
-            right: "auto",
-            bottom: "auto",
-            transform: "none",
-          }
-        : undefined
+    layout === "floating" || (dragging && dragTarget === "floating")
+      ? {
+          left: floatingPosition.x,
+          top: floatingPosition.y,
+          right: "auto",
+          bottom: "auto",
+          transform: "none",
+        }
       : undefined;
 
   return (
@@ -819,7 +873,7 @@ function MediaInfoSidebar({
       style={floatingStyle}
       className={[
         "pv-media-info-panel",
-        layout === "bottomSheet" ? "is-bottom-sheet" : "is-sidebar",
+        `placement-${layout}`,
         !open ? "is-collapsed" : "",
         dragging ? "is-dragging" : "",
         dragging ? `drag-target-${dragTarget}` : "",
@@ -830,8 +884,8 @@ function MediaInfoSidebar({
         <button
           type="button"
           className="pv-media-info-drag-handle"
-          aria-label="レコメンドをドラッグして下または右へ移動"
-          title="ドラッグして下部／右サイドを切り替え"
+          aria-label="情報とレコメンドをドラッグして移動"
+          title="ドラッグして上・下・左・右・フローティングへ移動"
           onPointerDown={(event) => {
             if (event.pointerType === "mouse" && event.button !== 0) return;
             event.preventDefault();
@@ -851,12 +905,13 @@ function MediaInfoSidebar({
           onPointerCancel={() => setDragging(false)}
         >
           <i /><i /><i />
-          <span>{dragging ? (dragTarget === "sidebar" ? "右サイドへ移動" : "下部へ移動") : "ドラッグして移動"}</span>
+          <span>{dragging ? `${dragTarget}へ移動` : "ドラッグして移動"}</span>
         </button>
         <div>
           <span className="pv-viewer-kicker">DETAILS & RECOMMEND</span>
           <h3>情報とおすすめ</h3>
         </div>
+        {open && <ViewerPanelPlacementControls value={layout} onChange={onLayoutChange} />}
         <button
           type="button"
           className="pv-media-info-sheet-toggle"
@@ -1206,8 +1261,10 @@ function MediaThumbnailRail({
   currentIndex,
   itemAt,
   open,
+  placement,
   onSelect,
   onToggle,
+  onPlacementChange,
   onVisibleRangeChange,
   includesAllMedia = false,
 }: {
@@ -1215,24 +1272,32 @@ function MediaThumbnailRail({
   currentIndex: number;
   itemAt: (index: number) => MediaItem | undefined;
   open: boolean;
+  placement: ViewerPanelPlacement;
   onSelect: (mediaId: string, index: number) => void;
   onToggle: () => void;
+  onPlacementChange: (placement: ViewerPanelPlacement) => void;
   onVisibleRangeChange?: (range: ViewerRailRange) => void;
   includesAllMedia?: boolean;
 }) {
+  const railRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollFrame = useRef<number | undefined>(undefined);
-  const pendingScrollLeft = useRef(0);
+  const pendingScrollOffset = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const [dragTarget, setDragTarget] = useState<ViewerPanelPlacement>(placement);
+  const [floatingPosition, setFloatingPosition] = useState({ x: 96, y: 96 });
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
   const [visibleRange, setVisibleRange] = useState<ViewerRailRange>(() =>
     viewerRailInitialRange(itemCount, currentIndex),
   );
-  const trackWidth = Math.max(
+  const vertical = placement === "left" || placement === "right";
+  const trackLength = Math.max(
     0,
     itemCount * VIEWER_RAIL_CARD_STRIDE - VIEWER_RAIL_CARD_GAP,
   );
 
-  const updateVisibleRange = useCallback((scrollLeft: number, viewportWidth: number) => {
-    const next = viewerRailRange(itemCount, scrollLeft, viewportWidth);
+  const updateVisibleRange = useCallback((offset: number, viewportSize: number) => {
+    const next = viewerRailRange(itemCount, offset, viewportSize);
     setVisibleRange((current) =>
       current.start === next.start && current.end === next.end ? current : next,
     );
@@ -1246,27 +1311,33 @@ function MediaThumbnailRail({
     const itemCenter = VIEWER_RAIL_START_PADDING
       + currentIndex * VIEWER_RAIL_CARD_STRIDE
       + VIEWER_RAIL_CARD_WIDTH / 2;
-    const nextScrollLeft = Math.max(
+    const scrollSize = vertical ? host.scrollHeight : host.scrollWidth;
+    const clientSize = vertical ? host.clientHeight : host.clientWidth;
+    const nextOffset = Math.max(
       0,
-      Math.min(host.scrollWidth - host.clientWidth, itemCenter - host.clientWidth / 2),
+      Math.min(scrollSize - clientSize, itemCenter - clientSize / 2),
     );
     // A direct jump keeps the virtual window and physical position in lock-step
     // when a recommendation selects an item far outside the current viewport.
-    host.scrollLeft = nextScrollLeft;
-    pendingScrollLeft.current = nextScrollLeft;
-    updateVisibleRange(nextScrollLeft, host.clientWidth);
-  }, [currentIndex, itemCount, open, updateVisibleRange]);
+    if (vertical) host.scrollTop = nextOffset;
+    else host.scrollLeft = nextOffset;
+    pendingScrollOffset.current = nextOffset;
+    updateVisibleRange(nextOffset, clientSize);
+  }, [currentIndex, itemCount, open, updateVisibleRange, vertical]);
 
   useEffect(() => {
     if (!open) return;
     const host = scrollRef.current;
     if (!host) return;
-    const update = () => updateVisibleRange(host.scrollLeft, host.clientWidth);
+    const update = () => updateVisibleRange(
+      vertical ? host.scrollTop : host.scrollLeft,
+      vertical ? host.clientHeight : host.clientWidth,
+    );
     update();
     const observer = new ResizeObserver(update);
     observer.observe(host);
     return () => observer.disconnect();
-  }, [open, updateVisibleRange]);
+  }, [open, updateVisibleRange, vertical]);
 
   useEffect(() => () => {
     if (scrollFrame.current !== undefined) {
@@ -1279,38 +1350,102 @@ function MediaThumbnailRail({
     (_, offset) => visibleRange.start + offset,
   );
 
+  const handleDragMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!dragging) return;
+    const bounds = railRef.current?.parentElement?.getBoundingClientRect();
+    if (!bounds) return;
+    const next = viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds);
+    setDragTarget(next);
+    if (next === "floating") {
+      const panelWidth = open ? 430 : 48;
+      const panelHeight = open ? 132 : 48;
+      setFloatingPosition({
+        x: Math.max(8, Math.min(event.clientX - bounds.left - dragOffsetRef.current.x, bounds.width - panelWidth - 8)),
+        y: Math.max(8, Math.min(event.clientY - bounds.top - dragOffsetRef.current.y, bounds.height - panelHeight - 8)),
+      });
+    }
+  };
+
+  const finishDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!dragging) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    const bounds = railRef.current?.parentElement?.getBoundingClientRect();
+    const next = bounds
+      ? viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds)
+      : dragTarget;
+    setDragging(false);
+    setDragTarget(next);
+    if (next !== placement) onPlacementChange(next);
+  };
+
+  const floatingStyle: React.CSSProperties | undefined = placement === "floating"
+    ? { left: floatingPosition.x, top: floatingPosition.y, right: "auto", bottom: "auto" }
+    : undefined;
+
   return (
     <nav
-      className={`pv-viewer-rail${open ? "" : " is-collapsed"}`}
+      ref={railRef}
+      style={floatingStyle}
+      className={`pv-viewer-rail placement-${placement}${open ? "" : " is-collapsed"}${dragging ? ` is-dragging drag-target-${dragTarget}` : ""}`}
       aria-label={includesAllMedia ? "ギャラリー内の全メディア一覧" : "同じ種類のメディア一覧"}
     >
-      <button
-        type="button"
-        className="pv-viewer-rail-toggle"
-        aria-expanded={open}
-        aria-label={open ? "メディア一覧を閉じる" : "メディア一覧を開く"}
-        title={open ? "一覧を閉じる" : "一覧を開く"}
-        onClick={onToggle}
-      >
-        <Icon name={open ? "eyeOff" : "eye"} />
-        <span>{open ? "一覧を閉じる" : "一覧を開く"}</span>
-      </button>
+      <div className="pv-viewer-rail-toolbar">
+        <button
+          type="button"
+          className="pv-viewer-rail-toggle"
+          aria-expanded={open}
+          aria-label={open ? "メディア一覧を閉じる" : "メディア一覧を開く"}
+          title={open ? "一覧を閉じる" : "一覧を開く"}
+          onClick={onToggle}
+        >
+          <Icon name={open ? "eyeOff" : "gallery"} />
+          <span>{open ? "一覧を閉じる" : "一覧を開く"}</span>
+        </button>
+        {open && <ViewerPanelPlacementControls value={placement} onChange={onPlacementChange} />}
+        {open && (
+          <button
+            type="button"
+            className="pv-viewer-rail-drag-handle"
+            aria-label="メディア一覧をドラッグして移動"
+            title="ドラッグして上・下・左・右・フローティングへ移動"
+            onPointerDown={(event) => {
+              if (event.pointerType === "mouse" && event.button !== 0) return;
+              event.preventDefault();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              const railBounds = railRef.current?.getBoundingClientRect();
+              dragOffsetRef.current = railBounds
+                ? { x: event.clientX - railBounds.left, y: event.clientY - railBounds.top }
+                : { x: 24, y: 24 };
+              setDragTarget(placement);
+              setDragging(true);
+            }}
+            onPointerMove={handleDragMove}
+            onPointerUp={finishDrag}
+            onPointerCancel={() => setDragging(false)}
+          >
+            <i /><i /><i />
+          </button>
+        )}
+      </div>
       <div
         ref={scrollRef}
         className="pv-viewer-rail-scroll"
-        onWheel={scrollHorizontalWithWheel}
+        onWheel={vertical ? undefined : scrollHorizontalWithWheel}
         onScroll={(event) => {
-          pendingScrollLeft.current = event.currentTarget.scrollLeft;
+          pendingScrollOffset.current = vertical ? event.currentTarget.scrollTop : event.currentTarget.scrollLeft;
           if (scrollFrame.current !== undefined) return;
           const host = event.currentTarget;
           scrollFrame.current = window.requestAnimationFrame(() => {
             scrollFrame.current = undefined;
-            updateVisibleRange(pendingScrollLeft.current, host.clientWidth);
+            updateVisibleRange(
+              pendingScrollOffset.current,
+              vertical ? host.clientHeight : host.clientWidth,
+            );
           });
         }}
-        title="ホイールで一覧を横スクロール"
+        title={`ホイールで一覧を${vertical ? "縦" : "横"}スクロール`}
       >
-        <div className="pv-viewer-rail-track" style={{ width: trackWidth }}>
+        <div className="pv-viewer-rail-track" style={vertical ? { height: trackLength } : { width: trackLength }}>
           {visibleIndexes.map((index) => {
             const candidate = itemAt(index);
             const selected = index === currentIndex;
@@ -1324,7 +1459,9 @@ function MediaThumbnailRail({
                   ? `${candidate.name}、${mediaTypeLabel(candidate)}、${index + 1} / ${itemCount}`
                   : `メディアを読み込み中、${index + 1} / ${itemCount}`}
                 title={candidate?.name ?? "読み込み中…"}
-                style={{ left: index * VIEWER_RAIL_CARD_STRIDE }}
+                style={vertical
+                  ? { top: index * VIEWER_RAIL_CARD_STRIDE }
+                  : { left: index * VIEWER_RAIL_CARD_STRIDE }}
                 onClick={() => candidate && onSelect(candidate.id, index)}
               >
                 <span className="pv-viewer-rail-visual">
@@ -3330,9 +3467,10 @@ export function MediaViewer({
   const { isFullscreen, changeFullscreen } = useViewerFullscreen(viewerShellRef);
   const menusHidden = isFullscreen;
   const [runtimeMetadata, setRuntimeMetadata] = useState<ViewerRuntimeMetadata>({});
-  const [infoLayout, setInfoLayout] = useState<ViewerInfoLayout>("sidebar");
-  const [recommendSheetOpen, setRecommendSheetOpen] = useState(true);
-  const [viewerRailOpen, setViewerRailOpen] = useState(true);
+  const [infoLayout, setInfoLayout] = useState<ViewerInfoLayout>("right");
+  const [railLayout, setRailLayout] = useState<ViewerPanelPlacement>("bottom");
+  const [recommendSheetOpen, setRecommendSheetOpen] = useState(false);
+  const [viewerRailOpen, setViewerRailOpen] = useState(false);
   const [imageContextMenu, setImageContextMenu] = useState<{ x: number; y: number }>();
   const [videoPlaybackPreferences, setVideoPlaybackPreferences] = useState<VideoPlaybackPreferences>(
     DEFAULT_VIDEO_PLAYBACK_PREFERENCES,
@@ -3589,12 +3727,14 @@ export function MediaViewer({
     let active = true;
     void getJsonPreference<ViewerInfoLayout>(
       VIEWER_INFO_LAYOUT_KEY,
-      "sidebar",
+      "right",
     ).then((result) => {
       if (!active) return;
-      const nextLayout = result.data === "bottomSheet" ? "bottomSheet" : "sidebar";
+      const nextLayout = normalizeViewerPanelPlacement(result.data, "right");
       setInfoLayout(nextLayout);
-      setRecommendSheetOpen(nextLayout === "sidebar");
+    });
+    void getJsonPreference<ViewerPanelPlacement>(VIEWER_RAIL_LAYOUT_KEY, "bottom").then((result) => {
+      if (active) setRailLayout(normalizeViewerPanelPlacement(result.data, "bottom"));
     });
     return () => { active = false; };
   }, [surroundingsReady]);
@@ -3635,6 +3775,18 @@ export function MediaViewer({
       }));
     });
   }, [infoLayout]);
+
+  const moveRailLayout = useCallback((nextLayout: ViewerPanelPlacement) => {
+    if (nextLayout === railLayout) return;
+    const previous = railLayout;
+    setRailLayout(nextLayout);
+    void setJsonPreference(VIEWER_RAIL_LAYOUT_KEY, nextLayout).then((result) => {
+      if (!result.data || result.error) {
+        setRailLayout(previous);
+        setError(result.error ?? "一覧の表示位置を保存できませんでした。");
+      }
+    });
+  }, [railLayout]);
 
   useEffect(() => {
     if (!surroundingsReady && item?.kind !== "video") return;
@@ -3707,7 +3859,8 @@ export function MediaViewer({
       else if (showTagEditor) setShowTagEditor(false);
       else if (showBookmarkList) setShowBookmarkList(false);
       else if (showBookSettings) setShowBookSettings(false);
-      else if (infoLayout === "bottomSheet" && recommendSheetOpen) setRecommendSheetOpen(false);
+      else if (recommendSheetOpen) setRecommendSheetOpen(false);
+      else if (viewerRailOpen) setViewerRailOpen(false);
       else onClose();
     };
     window.addEventListener("pixvault:navigate-back", handleNavigateBack);
@@ -3717,6 +3870,7 @@ export function MediaViewer({
     infoLayout,
     onClose,
     recommendSheetOpen,
+    viewerRailOpen,
     showBookmarkList,
     showBookSettings,
     showGifFrames,
@@ -3805,7 +3959,8 @@ export function MediaViewer({
         else if (showTagEditor) setShowTagEditor(false);
         else if (showBookmarkList) setShowBookmarkList(false);
         else if (showBookSettings) setShowBookSettings(false);
-        else if (infoLayout === "bottomSheet" && recommendSheetOpen) setRecommendSheetOpen(false);
+        else if (recommendSheetOpen) setRecommendSheetOpen(false);
+        else if (viewerRailOpen) setViewerRailOpen(false);
         else onClose();
         return;
       }
@@ -3838,7 +3993,7 @@ export function MediaViewer({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [bookBinding, bookViewMode, changeFullscreen, isFullscreen, closeGifFrames, imageContextMenu, infoLayout, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds]);
+  }, [bookBinding, bookViewMode, changeFullscreen, isFullscreen, closeGifFrames, imageContextMenu, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds, viewerRailOpen]);
 
   useEffect(() => {
     if (!message) return;
@@ -4480,7 +4635,7 @@ export function MediaViewer({
           </div>
         </header>}
 
-        <div className={`pv-viewer-content-grid info-${infoLayout}${recommendSheetOpen ? "" : " info-panel-collapsed"}`}>
+        <div className={`pv-viewer-content-grid info-at-${infoLayout} rail-at-${railLayout}${recommendSheetOpen ? "" : " info-panel-collapsed"}${viewerRailOpen ? "" : " rail-panel-collapsed"}`}>
           <main className="pv-viewer-main">
             {viewerContent}
             {isBook && showBookSettings && (
@@ -4589,20 +4744,21 @@ export function MediaViewer({
               onReveal={revealCurrentFile}
             />
           )}
+          {!menusHidden && surroundingsReady && viewerRailItemCount > 0 && (
+            <MediaThumbnailRail
+              itemCount={viewerRailItemCount}
+              currentIndex={viewerRailCurrentIndex}
+              itemAt={viewerRailItemAt}
+              open={viewerRailOpen}
+              placement={railLayout}
+              onSelect={selectViewerRailItem}
+              onToggle={() => setViewerRailOpen((current) => !current)}
+              onPlacementChange={moveRailLayout}
+              onVisibleRangeChange={viewerRailIncludesAllMedia ? ensureCollectionRange : undefined}
+              includesAllMedia={viewerRailIncludesAllMedia}
+            />
+          )}
         </div>
-
-        {!menusHidden && surroundingsReady && viewerRailItemCount > 0 && (
-          <MediaThumbnailRail
-            itemCount={viewerRailItemCount}
-            currentIndex={viewerRailCurrentIndex}
-            itemAt={viewerRailItemAt}
-            open={viewerRailOpen}
-            onSelect={selectViewerRailItem}
-            onToggle={() => setViewerRailOpen((current) => !current)}
-            onVisibleRangeChange={viewerRailIncludesAllMedia ? ensureCollectionRange : undefined}
-            includesAllMedia={viewerRailIncludesAllMedia}
-          />
-        )}
 
         {!menusHidden && isBook && (
           <div className="pv-book-controls">

@@ -800,8 +800,11 @@ export function SettingsPage({
                   ariaLabel="ビュワーの情報表示"
                   onChange={(value) => void updatePreference("viewerInfoLayout", value as UserPreferences["viewerInfoLayout"])}
                   options={[
-                    { value: "sidebar", label: "右サイドバー" },
-                    { value: "bottomSheet", label: "レコメンドボトムシート" },
+                    { value: "top", label: "上" },
+                    { value: "bottom", label: "下" },
+                    { value: "left", label: "左" },
+                    { value: "right", label: "右" },
+                    { value: "floating", label: "フローティング" },
                   ]}
                 />
               </label>
