@@ -382,16 +382,20 @@ pub(crate) fn recover_suspicious_missing_media(
                     "SELECT relative_path
                      FROM media_items
                      WHERE root_id = ?1 AND is_missing = 1
-                     ORDER BY id
-                     LIMIT ?2",
+                     ORDER BY id",
                 )
                 .map_err(|error| format!("Failed to prepare missing-media sample: {error}"))?;
             statement
-                .query_map(
-                    params![root_id, SUSPICIOUS_MISSING_SAMPLE_SIZE as i64],
-                    |row| row.get::<_, String>(0),
-                )
+                .query_map([&root_id], |row| row.get::<_, String>(0))
                 .map_err(|error| format!("Failed to query missing-media sample: {error}"))?
+                // Intentional internal-file exclusions are not missing user
+                // media. Never let their presence trigger a recovery rescan.
+                .filter(|relative| {
+                    relative.as_ref().map_or(true, |relative| {
+                        !is_internal_media_temporary(Path::new(relative))
+                    })
+                })
+                .take(SUSPICIOUS_MISSING_SAMPLE_SIZE)
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|error| format!("Failed to read missing-media sample: {error}"))?
         };
@@ -1826,11 +1830,12 @@ fn scan_root_scope(
         .iter()
         .filter(|(_, path)| !seen.contains(&path.to_lowercase()))
         .filter(|(_, path)| {
-            confirmed_missing_cached(
-                &canonical_root,
-                &canonical_root.join(path),
-                &mut directory_entries,
-            )
+            is_internal_media_temporary(Path::new(path))
+                || confirmed_missing_cached(
+                    &canonical_root,
+                    &canonical_root.join(path),
+                    &mut directory_entries,
+                )
         })
         .map(|(id, _)| id.clone())
         .collect::<Vec<_>>();
@@ -2888,6 +2893,9 @@ fn path_to_string(path: &Path) -> Result<String, String> {
 }
 
 pub(crate) fn classify_media(path: &Path) -> Option<(&'static str, String, String)> {
+    if is_internal_media_temporary(path) {
+        return None;
+    }
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     let kind = match extension.as_str() {
         "gif" => "gif",
@@ -2912,6 +2920,40 @@ pub(crate) fn classify_media(path: &Path) -> Option<(&'static str, String, Strin
             .to_owned(),
     };
     Some((kind, extension, mime_type))
+}
+
+pub(crate) fn is_internal_media_temporary(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(stem) = name
+        .strip_prefix('.')
+        .and_then(|name| name.strip_suffix(".gif-source.mp4"))
+    else {
+        return false;
+    };
+    let Some((base, token)) = stem.rsplit_once('.') else {
+        return false;
+    };
+    !base.is_empty() && token.len() == 36 && uuid::Uuid::parse_str(token).is_ok()
+}
+
+pub(crate) fn hide_internal_media_temporaries(state: &AppState) -> Result<usize, String> {
+    let ids = {
+        let connection = state.database.lock()?;
+        let mut statement = connection.prepare("SELECT id, file_name FROM media_items WHERE is_missing = 0 AND file_name LIKE '%.gif-source.mp4'")
+            .map_err(|error| error.to_string())?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| error.to_string())?
+            .filter_map(|row| row.ok())
+            .filter(|(_, name)| is_internal_media_temporary(Path::new(name)))
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
+    };
+    mark_media_ids_missing(state, &ids)
 }
 
 fn metadata_modified_millis(metadata: &Metadata) -> i64 {
@@ -3357,6 +3399,37 @@ mod tests {
     }
 
     #[test]
+    fn intentionally_hidden_gif_sources_do_not_trigger_missing_media_recovery() {
+        let directory = tempdir().unwrap();
+        let state = initialized_state();
+        let root = add_library_root(&state, directory.path().to_str().unwrap()).unwrap();
+        let token = uuid::Uuid::new_v4().to_string();
+        {
+            let mut connection = state.database.lock().unwrap();
+            let transaction = connection.transaction().unwrap();
+            for index in 0..MASS_MISSING_GUARD_MIN_ITEMS {
+                let id = format!("temp-{index:04}");
+                let name = format!(".creator_{index:04}.{token}.gif-source.mp4");
+                if index < SUSPICIOUS_MISSING_SAMPLE_SIZE as u64 {
+                    fs::write(directory.path().join(&name), b"intermediate").unwrap();
+                }
+                transaction.execute(
+                    "INSERT INTO media_items(id, root_id, relative_path, file_name, extension, media_kind, mime_type, byte_size, modified_at, is_missing, first_seen_at, last_seen_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?3, 'mp4', 'video', 'video/mp4', 1, 0, 1, 0, 0, 0)",
+                    params![id, root.id, name],
+                ).unwrap();
+            }
+            transaction.commit().unwrap();
+        }
+        assert!(recover_suspicious_missing_media(&state).unwrap().is_empty());
+        assert!(list_media_items(&state, None).unwrap().is_empty());
+        assert_eq!(
+            fs::read_dir(directory.path()).unwrap().count(),
+            SUSPICIOUS_MISSING_SAMPLE_SIZE
+        );
+    }
+
+    #[test]
     fn confirmed_mass_deletion_is_not_hidden_by_a_completeness_guard() {
         let directory = tempdir().unwrap();
         for index in 0..1_010 {
@@ -3733,6 +3806,41 @@ mod tests {
         ));
         assert!(scan_library(&state, Some(&root.id)).is_err());
         assert_eq!(list_media_items(&state, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn internal_gif_sources_are_hidden_without_deleting_user_files() {
+        let directory = tempdir().unwrap();
+        let state = initialized_state();
+        let ordinary = directory.path().join(".personal.mp4");
+        let old_path = directory.path().join(".legacy.mp4");
+        fs::write(&ordinary, b"ordinary hidden video").unwrap();
+        fs::write(&old_path, b"old intermediate").unwrap();
+        let root = add_library_root(&state, directory.path().to_str().unwrap()).unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        let name = format!(".creator_123.{}.gif-source.mp4", uuid::Uuid::new_v4());
+        let source = directory.path().join(&name);
+        fs::rename(&old_path, &source).unwrap();
+        state.database.lock().unwrap().execute(
+            "UPDATE media_items SET relative_path = ?1, file_name = ?1 WHERE file_name = '.legacy.mp4'",
+            [&name],
+        ).unwrap();
+        assert!(classify_media(&source).is_none());
+        assert!(classify_media(&ordinary).is_some());
+        assert!(classify_media(Path::new(".personal.gif-source.mp4")).is_some());
+        assert!(classify_media(Path::new(".personal.not-a-uuid.gif-source.mp4")).is_some());
+        assert_eq!(hide_internal_media_temporaries(&state).unwrap(), 1);
+        assert_eq!(list_media_items(&state, None).unwrap().len(), 1);
+        assert!(source.exists());
+        state
+            .database
+            .lock()
+            .unwrap()
+            .execute("UPDATE media_items SET is_missing = 0", [])
+            .unwrap();
+        scan_library(&state, Some(&root.id)).unwrap();
+        assert_eq!(list_media_items(&state, None).unwrap().len(), 1);
+        assert!(source.exists() && ordinary.exists());
     }
 
     #[test]

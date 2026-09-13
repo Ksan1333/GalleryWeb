@@ -133,7 +133,7 @@ try {
     assert.ok(geometry.label.bottom <= geometry.card.bottom + 1, "folder label fits its tile");
     assert.ok(geometry.card.bottom <= geometry.scroller.bottom + 1, "entire first row is visible");
     assert.ok(Math.abs(geometry.card.width - geometry.card.height) < 2, "thumbnail plus label is square");
-    assert.ok(geometry.labelFont >= 11 && geometry.label.height <= 31, "readable two-line folder name");
+    assert.ok(geometry.labelFont >= 13 && geometry.label.height <= 35, "larger two-line folder name fits its caption");
     assert.ok(geometry.open.width > geometry.openFont * 2 + 8, "open button has room for both characters");
     assert.ok(geometry.open.height <= 42, "open button stays on one line");
     assert.ok(geometry.overflow <= 1 && geometry.formOverflow <= 1, "no horizontal page/form overflow");

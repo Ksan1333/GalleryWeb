@@ -3990,11 +3990,15 @@ async fn get_media_page_info(
 }
 
 #[tauri::command]
-fn recycle_media_item(
-    state: State<'_, AppState>,
+async fn recycle_media_item(
+    app: tauri::AppHandle,
     media_id: String,
 ) -> Result<MutationResult, String> {
-    platform::recycle_media_item(&state, &media_id)
+    run_catalog_worker("Recycle media", move || {
+        vlc_playback::release_media_for_recycle(&media_id)?;
+        platform::recycle_media_item(&app.state::<AppState>(), &media_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -4408,6 +4412,30 @@ pub fn run() {
                 diagnostics::record("protocol-error", &error);
             }
             app.manage(state);
+            let maintenance_app = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let state = maintenance_app.state::<AppState>();
+                if let Err(error) = x_downloader::cleanup_gif_source_cache(&state) {
+                    diagnostics::record("gif-cache-cleanup-error", &error);
+                }
+                match catalog::hide_internal_media_temporaries(&state) {
+                    Ok(hidden) if hidden > 0 => {
+                        invalidate_media_presence_cache();
+                        let _ = maintenance_app.emit(
+                            folder_watcher::LIBRARY_WATCH_EVENT,
+                            serde_json::json!({
+                                "rootId": "internal-temporary-cleanup",
+                                "inserted": 0,
+                                "updated": 0,
+                                "missing": hidden,
+                                "queuedForAnalysis": 0
+                            }),
+                        );
+                    }
+                    Err(error) => diagnostics::record("gif-cache-catalog-error", &error),
+                    _ => {}
+                }
+            });
             app.manage(ai::AiRuntimeState::new(ai_model_directory));
             app.manage(system_metrics::SystemMetricsState::default());
             folder_watcher::start(app.handle().clone(), database_path.clone());

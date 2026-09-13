@@ -4,7 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 type Rect = { x: number; y: number; width: number; height: number };
 type Layout = { rect: Rect; holes: Rect[]; visible: boolean };
 type Input = { kind: string; x: number; y: number; delta: number; buttons: number };
-const overlays = ".pv-video-controls,.pv-video-status,.pv-video-wheel-feedback,.pv-video-seek-preview,.pv-viewer-menu-restore,.pv-viewer-toast,.pv-media-info-panel,[role=menu],[data-native-video-occluder]";
+const overlays = ".pv-video-controls,.pv-video-status,.pv-video-wheel-feedback,.pv-video-seek-preview,.pv-viewer-menu-restore,.pv-viewer-toast,.pv-media-info-panel,.pv-viewer-rail,.pv-viewer-header,.pv-viewer-footer,.pv-viewer-panel-drop-preview,[role=menu],[data-native-video-occluder]";
 const rendered = (element: Element) => {
     const style = getComputedStyle(element);
     return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0.01;
@@ -14,11 +14,39 @@ export function surfaceLayout(element: HTMLElement): Layout {
     const bounds = element.getBoundingClientRect();
     const rect = { x: Math.round(bounds.x * dpr), y: Math.round(bounds.y * dpr), width: Math.round(bounds.width * dpr), height: Math.round(bounds.height * dpr) };
     const blocked = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].some(dialog => !dialog.contains(element) && rendered(dialog));
-    const visible = element.isConnected && !document.hidden && !blocked && !element.closest('[inert]') && rendered(element) && bounds.width > 0 && bounds.height > 0;
-    const holes = [...document.querySelectorAll(overlays)].filter(node => !node.contains(element) && rendered(node)).map(node => node.getBoundingClientRect()).filter(other => other.right > bounds.left && other.left < bounds.right && other.bottom > bounds.top && other.top < bounds.bottom).map(other => ({
+    let visible = element.isConnected && !document.hidden && !blocked && !element.closest('[inert]') && rendered(element) && bounds.width > 0 && bounds.height > 0;
+    let left = Math.max(bounds.left, 0), top = Math.max(bounds.top, 0);
+    let right = Math.min(bounds.right, window.innerWidth), bottom = Math.min(bounds.bottom, window.innerHeight);
+    // HWND video is outside the DOM compositor: CSS overflow does not clip it.
+    // Preserve the full video rectangle/aspect ratio, but cut away everything
+    // outside each ancestor's visible content box before exposing the surface.
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        if (!rendered(parent)) visible = false;
+        const style = getComputedStyle(parent);
+        const box = parent.getBoundingClientRect();
+        if (/(hidden|clip|auto|scroll)/.test(style.overflowX)) {
+            left = Math.max(left, box.left + parent.clientLeft);
+            right = Math.min(right, box.left + parent.clientLeft + parent.clientWidth);
+        }
+        if (/(hidden|clip|auto|scroll)/.test(style.overflowY)) {
+            top = Math.max(top, box.top + parent.clientTop);
+            bottom = Math.min(bottom, box.top + parent.clientTop + parent.clientHeight);
+        }
+    }
+    const holes: Rect[] = [];
+    const clipLeft = Math.max(0, Math.ceil(left * dpr) - rect.x);
+    const clipTop = Math.max(0, Math.ceil(top * dpr) - rect.y);
+    const clipRight = Math.min(rect.width, Math.floor(right * dpr) - rect.x);
+    const clipBottom = Math.min(rect.height, Math.floor(bottom * dpr) - rect.y);
+    if (clipLeft > 0) holes.push({ x: 0, y: 0, width: Math.min(rect.width, clipLeft), height: rect.height });
+    if (clipRight < rect.width) holes.push({ x: Math.max(0, clipRight), y: 0, width: rect.width - Math.max(0, clipRight), height: rect.height });
+    if (clipTop > 0) holes.push({ x: 0, y: 0, width: rect.width, height: Math.min(rect.height, clipTop) });
+    if (clipBottom < rect.height) holes.push({ x: 0, y: Math.max(0, clipBottom), width: rect.width, height: rect.height - Math.max(0, clipBottom) });
+    visible &&= clipRight > clipLeft && clipBottom > clipTop;
+    holes.push(...[...document.querySelectorAll(overlays)].filter(node => !node.contains(element) && rendered(node)).map(node => node.getBoundingClientRect()).filter(other => other.right > bounds.left && other.left < bounds.right && other.bottom > bounds.top && other.top < bounds.bottom).map(other => ({
         x: Math.floor((other.left - bounds.left) * dpr), y: Math.floor((other.top - bounds.top) * dpr),
         width: Math.ceil(other.width * dpr) + 2, height: Math.ceil(other.height * dpr) + 2,
-    }));
+    })));
     // More than the bounded native region budget means hide rather than covering UI.
     return { rect, holes: holes.slice(0, 64), visible: Boolean(visible && holes.length <= 64) };
 }

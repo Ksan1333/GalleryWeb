@@ -28,6 +28,7 @@ const MAX_X_MEDIA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_X_METADATA_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_X_MEDIA_ITEMS: usize = 16;
 const MAX_PENDING_X_GIFS: usize = 128;
+const GIF_SOURCE_RETENTION: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 const SYNDICATION_ENDPOINT: &str = "https://cdn.syndication.twimg.com/tweet-result";
 const FXTWITTER_ENDPOINT: &str = "https://api.fxtwitter.com/status";
 const SYNDICATION_FEATURES: &str = "tfw_timeline_list:;tfw_follower_count_sunset:true;\
@@ -138,6 +139,76 @@ struct PendingGifFinalize {
 
 static PENDING_X_GIF_FINALIZATIONS: OnceLock<Mutex<HashMap<String, PendingGifFinalize>>> =
     OnceLock::new();
+
+fn gif_source_cache_directory(state: &AppState) -> Result<PathBuf, String> {
+    let parent = state
+        .database
+        .path()
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| "GIF一時保存用のアプリデータフォルダーを確認できませんでした".to_owned())?;
+    Ok(parent.join("x-gif-sources"))
+}
+
+/// Only our exact UUID-named intermediates in the app-owned cache expire.
+/// Older releases left files in user folders; those are never removed here.
+pub(crate) fn cleanup_gif_source_cache(state: &AppState) -> Result<usize, String> {
+    let directory = match gif_source_cache_directory(state)?.canonicalize() {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(format!("GIF一時キャッシュを確認できませんでした: {error}")),
+    };
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(format!("GIF一時キャッシュを確認できませんでした: {error}")),
+    };
+    let active = pending_x_gifs()
+        .lock()
+        .map_err(|_| "GIF変換情報を確認できませんでした")?
+        .values()
+        .map(|pending| pending.source_path.clone())
+        .collect::<HashSet<_>>();
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let candidate = if path
+            .extension()
+            .is_some_and(|extension| extension == "part")
+        {
+            path.with_extension("")
+        } else {
+            path.clone()
+        };
+        if !catalog::is_internal_media_temporary(&candidate)
+            || active.contains(&candidate)
+            || !entry.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age >= GIF_SOURCE_RETENTION);
+        if stale && fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+fn gif_source_path(state: &AppState, base_name: &str, token: &str) -> Result<PathBuf, String> {
+    let directory = gif_source_cache_directory(state)?;
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("GIF一時キャッシュを作成できませんでした: {error}"))?;
+    let _ = cleanup_gif_source_cache(state);
+    let directory = directory
+        .canonicalize()
+        .map_err(|error| format!("GIF一時キャッシュを確認できませんでした: {error}"))?;
+    Ok(directory.join(format!(".{base_name}.{token}.gif-source.mp4")))
+}
 
 pub fn inspect_x_post(source_url: &str) -> Result<XPostInspection, String> {
     let (post_id, source_url) = parse_post_url(source_url)?;
@@ -355,7 +426,7 @@ fn download_x_post_inner(
             .as_ref()
             .map(|_| available_destination(destination, &base_name, "gif"));
         let destination_path = if let Some(token) = gif_finalize_token.as_deref() {
-            destination.join(format!(".{base_name}.{token}.gif-source.mp4"))
+            gif_source_path(state, &base_name, token)?
         } else {
             available_destination(destination, &base_name, &candidate.variant.extension)
         };
@@ -560,8 +631,18 @@ pub fn fail_x_gif_finalization(
         .find(|item| item.id == pending.history_id)
         .ok_or_else(|| "Xダウンロード履歴が見つかりませんでした".to_owned())?;
     let message = message.trim().chars().take(800).collect::<String>();
+    let retention = if gif_source_cache_directory(state)
+        .ok()
+        .and_then(|path| path.canonicalize().ok())
+        .as_deref()
+        == pending.source_path.parent()
+    {
+        "変換元は復旧用としてアプリ内キャッシュに7日間保管します"
+    } else {
+        "変換元の一時動画は次の場所に残しています"
+    };
     let failure = format!(
-        "GIF変換に失敗しました: {}\n変換元の一時動画は次の場所に残しています: {}",
+        "GIF変換に失敗しました: {}\n{retention}: {}",
         if message.is_empty() {
             "原因を確認できませんでした"
         } else {
@@ -624,8 +705,16 @@ fn finalize_x_gif_inner(
         .ok_or_else(|| "GIFの保存先を確認できませんでした".to_owned())?
         .canonicalize()
         .map_err(|error| format!("GIFの保存先を確認できませんでした: {error}"))?;
-    if source_parent != output_parent {
-        return Err("GIFはダウンロードした一時動画と同じフォルダーにのみ保存できます".to_owned());
+    let destination = Path::new(&pending.destination_dir)
+        .canonicalize()
+        .map_err(|error| format!("GIFの保存先を確認できませんでした: {error}"))?;
+    let managed_source = gif_source_cache_directory(state)
+        .ok()
+        .and_then(|directory| directory.canonicalize().ok())
+        .is_some_and(|directory| directory == source_parent)
+        && catalog::is_internal_media_temporary(&pending.source_path);
+    if output_parent != destination || (!managed_source && source_parent != output_parent) {
+        return Err("GIFはダウンロード時に選んだフォルダーにのみ保存できます".to_owned());
     }
 
     let output_path = if pending.output_path.exists() {
@@ -1579,6 +1668,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gif_sources_stay_in_app_cache_and_only_expired_owned_files_are_cleaned() {
+        let directory = tempfile::tempdir().unwrap();
+        let data = directory.path().join("app-data");
+        let destination = directory.path().join("media");
+        fs::create_dir_all(&destination).unwrap();
+        let state = AppState::open(&data.join("catalog.sqlite3")).unwrap();
+        let stale = gif_source_path(&state, "creator_123", &Uuid::new_v4().to_string()).unwrap();
+        let recent = gif_source_path(&state, "creator_124", &Uuid::new_v4().to_string()).unwrap();
+        let partial = gif_source_path(&state, "creator_125", &Uuid::new_v4().to_string())
+            .unwrap()
+            .with_extension("mp4.part");
+        let unrelated = stale.parent().unwrap().join(".personal.mp4");
+        let legacy = destination.join(stale.file_name().unwrap());
+        for path in [&stale, &recent, &partial, &unrelated, &legacy] {
+            fs::write(path, b"synthetic source").unwrap();
+        }
+        let old = SystemTime::now() - GIF_SOURCE_RETENTION - std::time::Duration::from_secs(60);
+        for path in [&stale, &partial, &unrelated, &legacy] {
+            File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(old))
+                .unwrap();
+        }
+        assert_eq!(
+            stale.parent().unwrap(),
+            data.join("x-gif-sources").canonicalize().unwrap()
+        );
+        assert_eq!(cleanup_gif_source_cache(&state).unwrap(), 2);
+        assert!(!stale.exists() && !partial.exists());
+        assert!(recent.exists() && unrelated.exists() && legacy.exists());
+        assert_eq!(cleanup_gif_source_cache(&state).unwrap(), 0);
+    }
+
+    #[test]
     fn accepts_only_supported_x_post_urls() {
         assert_eq!(
             parse_post_url("https://x.com/example/status/1346889436626259968?s=20")
@@ -1874,7 +1999,8 @@ mod tests {
     #[ignore = "downloads live media from the public X CDN"]
     fn live_sensitive_multi_gif_post_downloads_and_converts_both_gifs() {
         let directory = tempfile::tempdir().expect("live X download directory");
-        let state = AppState::in_memory().expect("in-memory catalog");
+        let state = AppState::open(&directory.path().join("app-data/catalog.sqlite3"))
+            .expect("test catalog");
         let result = download_x_post(
             &state,
             "https://x.com/notdodo_x/status/2081950343177376211",

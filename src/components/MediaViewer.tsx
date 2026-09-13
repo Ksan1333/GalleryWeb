@@ -9,6 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useViewerFullscreen } from "../hooks/useViewerFullscreen";
 import { useVideoPlayback } from "../hooks/useVideoPlayback";
@@ -159,6 +160,29 @@ function viewerPanelPlacementFromPoint(
   if (clientX <= bounds.left + horizontalEdge) return "left";
   if (clientX >= bounds.right - horizontalEdge) return "right";
   return "floating";
+}
+
+function ViewerPanelDropPreview({
+  host,
+  placement,
+  floatingPosition,
+}: {
+  host: HTMLElement | null | undefined;
+  placement: ViewerPanelPlacement;
+  floatingPosition: { x: number; y: number };
+}) {
+  if (!host) return null;
+  const label = VIEWER_PANEL_PLACEMENTS.find((candidate) => candidate.value === placement)?.label;
+  // The portal is outside the moving panel: transforms on docked/minimized
+  // tabs must never turn the old tab into the preview's containing block.
+  return createPortal(
+    <div
+      className={`pv-viewer-panel-drop-preview target-${placement}`}
+      style={placement === "floating" ? { left: floatingPosition.x, top: floatingPosition.y } : undefined}
+      role="status"
+    >○ {placement === "floating" ? "フローティングへ移動" : label}</div>,
+    host,
+  );
 }
 
 function ViewerPanelPlacementControls({
@@ -738,6 +762,9 @@ function RecommendationGroup({
                 >
                   <span className="pv-media-recommendation-visual">
                     <ThumbnailVisual item={candidate} />
+                    <span className={`pv-viewer-rail-type kind-${candidate.kind}`} title={mediaTypeLabel(candidate)}>
+                      <Icon name={candidate.kind === "video" ? "video" : candidate.kind === "pdf" || candidate.kind === "archive" ? "book" : "image"} />
+                    </span>
                     {metric === "similarity" && score !== undefined && (
                       <em>{Math.max(0, Math.round(score * 100))}%</em>
                     )}
@@ -766,7 +793,7 @@ function RecommendationGroup({
   );
 }
 
-function MediaInfoSidebar({
+export function MediaInfoSidebar({
   item,
   items,
   tags,
@@ -783,6 +810,7 @@ function MediaInfoSidebar({
   onSelect,
   onEditTags,
   onReveal,
+  propertiesOnly = false,
 }: {
   item: MediaItem;
   items: MediaItem[];
@@ -798,8 +826,9 @@ function MediaInfoSidebar({
   onToggleOpen: () => void;
   onLayoutChange: (layout: ViewerInfoLayout, keepCollapsed?: boolean) => void;
   onSelect: (item: MediaItem) => void;
-  onEditTags: () => void;
+  onEditTags?: () => void;
   onReveal: () => void;
+  propertiesOnly?: boolean;
 }) {
   const [dragging, setDragging] = useState(false);
   const [dragTarget, setDragTarget] = useState<ViewerInfoLayout>(layout);
@@ -816,7 +845,7 @@ function MediaInfoSidebar({
     vectorLoading,
     vectorPending,
     usesVisualVector,
-  } = useMediaRecommendations(item, tags, items, open);
+  } = useMediaRecommendations(item, tags, items, open && !propertiesOnly);
   const width = runtimeMetadata.width ?? item.width;
   const height = runtimeMetadata.height ?? item.height;
   const duration = runtimeMetadata.durationSeconds ?? item.durationSeconds;
@@ -843,8 +872,8 @@ function MediaInfoSidebar({
     const next = viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds);
     setDragTarget(next);
     if (next === "floating") {
-      const panelWidth = open ? 320 : 48;
-      const panelHeight = open ? Math.min(520, bounds.height * .7) : 48;
+      const panelWidth = open ? Math.min(360, bounds.width - 24) : 48;
+      const panelHeight = open ? Math.min(560, bounds.height * .7) : 48;
       setFloatingPosition({
         x: Math.max(8, Math.min(
           event.clientX - bounds.left - dragOffsetRef.current.x,
@@ -865,8 +894,8 @@ function MediaInfoSidebar({
     const panelBounds = panelRef.current?.getBoundingClientRect();
     dragOffsetRef.current = panelBounds
       ? {
-          x: Math.max(0, event.clientX - panelBounds.left),
-          y: Math.max(0, event.clientY - panelBounds.top),
+          x: Math.max(0, Math.min(open ? 320 : 24, event.clientX - panelBounds.left)),
+          y: Math.max(0, Math.min(open ? 32 : 24, event.clientY - panelBounds.top)),
         }
       : { x: 24, y: 24 };
     dragStartRef.current = { x: event.clientX, y: event.clientY };
@@ -878,6 +907,10 @@ function MediaInfoSidebar({
   const finishLayoutDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!dragging) return;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
+    if (!suppressToggleRef.current) {
+      setDragging(false);
+      return;
+    }
     const bounds = panelRef.current?.parentElement?.getBoundingClientRect();
     const finalTarget = bounds
       ? viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds)
@@ -888,7 +921,7 @@ function MediaInfoSidebar({
   };
 
   const floatingStyle: React.CSSProperties | undefined =
-    layout === "floating" || (dragging && dragTarget === "floating")
+    layout === "floating"
       ? {
           left: floatingPosition.x,
           top: floatingPosition.y,
@@ -899,11 +932,13 @@ function MediaInfoSidebar({
       : undefined;
 
   return (
+    <>
     <aside
       ref={panelRef}
       style={floatingStyle}
       className={[
         "pv-media-info-panel",
+        propertiesOnly ? "is-properties" : "",
         `placement-${layout}`,
         !open ? "is-collapsed" : "",
         dragging ? "is-dragging" : "",
@@ -911,7 +946,7 @@ function MediaInfoSidebar({
       ].filter(Boolean).join(" ")}
       aria-label="メディア情報とおすすめ"
     >
-      <header>
+      {!propertiesOnly && <header>
         <button
           type="button"
           className="pv-media-info-drag-handle"
@@ -923,7 +958,7 @@ function MediaInfoSidebar({
           onPointerCancel={() => setDragging(false)}
         >
           <i /><i /><i />
-          <span>{dragging ? `${dragTarget}へ移動` : "ドラッグして移動"}</span>
+          <span>ドラッグして移動</span>
         </button>
         <div>
           <span className="pv-viewer-kicker">DETAILS & RECOMMEND</span>
@@ -936,7 +971,7 @@ function MediaInfoSidebar({
           aria-expanded={open}
           aria-label={open ? "情報とレコメンドを閉じる" : "情報とレコメンドを開く"}
           title={open ? "閉じる" : "開く"}
-          onPointerDown={!open && layout === "floating" ? startLayoutDrag : undefined}
+          onPointerDown={!open && layout === "floating" ? startLayoutDrag : () => { suppressToggleRef.current = false; }}
           onPointerMove={!open && layout === "floating" ? handleDragMove : undefined}
           onPointerUp={!open && layout === "floating" ? finishLayoutDrag : undefined}
           onPointerCancel={!open && layout === "floating" ? () => setDragging(false) : undefined}
@@ -950,8 +985,9 @@ function MediaInfoSidebar({
           }}
         >
           <Icon name={open ? "minus" : "sparkles"} />
+          {!open && layout !== "floating" && <span>レコメンド</span>}
         </button>
-      </header>
+      </header>}
       <div className="pv-media-info-scroll">
         <section className="pv-media-info-overview">
           <div className="pv-media-info-summary">
@@ -967,14 +1003,14 @@ function MediaInfoSidebar({
           </div>
         </section>
 
-        <RecommendationGroup
+        {!propertiesOnly && <RecommendationGroup
           title={sameFolderLabel}
           description="現在のファイルと同じフォルダからランダムに表示"
           recommendations={randomItems}
           onSelect={onSelect}
-        />
+        />}
 
-        <RecommendationGroup
+        {!propertiesOnly && <RecommendationGroup
           title={usesVisualVector ? "似ている画像" : "同じタグの候補"}
           description={usesVisualVector
             ? "ライブラリー全体をMobileNetV3の意味特徴ベクトルで比較（40%超）"
@@ -983,12 +1019,12 @@ function MediaInfoSidebar({
           loading={usesVisualVector && vectorLoading}
           pending={usesVisualVector && vectorPending}
           onSelect={onSelect}
-        />
+        />}
 
         <section className="pv-media-info-section">
           <div className="pv-media-info-section-title">
             <span><Icon name="tag" />タグ</span>
-            <button type="button" onClick={onEditTags}>編集</button>
+            {onEditTags && <button type="button" onClick={onEditTags}>編集</button>}
           </div>
           <div className="pv-media-info-tags">
             {tags.length > 0
@@ -997,17 +1033,18 @@ function MediaInfoSidebar({
                 const confidence = tag.source === "ai" && tag.confidence !== undefined
                   ? Math.max(0, Math.min(1, tag.confidence))
                   : undefined;
+                const TagChip = propertiesOnly ? "span" : "button";
                 return (
-                  <button
-                    type="button"
+                  <TagChip
+                    type={propertiesOnly ? undefined : "button"}
                     key={tag.id}
                     className={confidence !== undefined ? "is-ai-confidence" : undefined}
                     style={confidence !== undefined
                       ? { "--pv-tag-confidence": `${Math.round(confidence * 100)}%` } as React.CSSProperties
                       : undefined}
                     title={translatedName !== tag.name ? `${translatedName} (${tag.name})` : tag.name}
-                    aria-expanded={tagNavigationTag?.id === tag.id}
-                    onClick={() => setTagNavigationTag((current) =>
+                    aria-expanded={propertiesOnly ? undefined : tagNavigationTag?.id === tag.id}
+                    onClick={propertiesOnly ? undefined : () => setTagNavigationTag((current) =>
                       current?.id === tag.id ? undefined : tag)}
                   >
                     <i style={{ backgroundColor: tag.color || "#a77bf3" }} />
@@ -1015,7 +1052,7 @@ function MediaInfoSidebar({
                     {confidence !== undefined && (
                       <strong>{Math.round(confidence * 100)}%</strong>
                     )}
-                  </button>
+                  </TagChip>
                 );
               })
               : <em>タグはまだありません</em>}
@@ -1065,8 +1102,8 @@ function MediaInfoSidebar({
             {width && height && <div><dt>寸法</dt><dd>{width.toLocaleString("ja-JP")} × {height.toLocaleString("ja-JP")} px</dd></div>}
             {width && height && <div><dt>アスペクト比</dt><dd>{aspect}</dd></div>}
             {item.kind === "video" && <div><dt>再生時間</dt><dd>{duration ? formatTime(duration) : "—"}</dd></div>}
-            {book && <div><dt>ページ</dt><dd>{pageCount > 0 ? `${pageCount.toLocaleString("ja-JP")} ページ` : "取得中"}</dd></div>}
-            {book && pageCount > 0 && <div><dt>表示位置</dt><dd>{Math.min(pageCount, pageIndex + 1).toLocaleString("ja-JP")} / {pageCount.toLocaleString("ja-JP")}</dd></div>}
+            {book && <div><dt>ページ</dt><dd>{pageCount > 0 ? `${pageCount.toLocaleString("ja-JP")} ページ` : propertiesOnly ? "未取得" : "取得中"}</dd></div>}
+            {book && !propertiesOnly && pageCount > 0 && <div><dt>表示位置</dt><dd>{Math.min(pageCount, pageIndex + 1).toLocaleString("ja-JP")} / {pageCount.toLocaleString("ja-JP")}</dd></div>}
             <div><dt>更新日時</dt><dd>{formatDateTime(item.modifiedAt)}</dd></div>
             <div><dt>登録日時</dt><dd>{formatDateTime(item.importedAt)}</dd></div>
           </dl>
@@ -1090,6 +1127,8 @@ function MediaInfoSidebar({
         </section>
       </div>
     </aside>
+    {dragging && <ViewerPanelDropPreview host={panelRef.current?.parentElement} placement={dragTarget} floatingPosition={floatingPosition} />}
+    </>
   );
 }
 
@@ -1391,8 +1430,8 @@ function MediaThumbnailRail({
     const next = viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds);
     setDragTarget(next);
     if (next === "floating") {
-      const panelWidth = open ? 430 : 48;
-      const panelHeight = open ? 132 : 48;
+      const panelWidth = open ? Math.min(430, bounds.width - 24) : 48;
+      const panelHeight = open ? 164 : 48;
       setFloatingPosition({
         x: Math.max(8, Math.min(event.clientX - bounds.left - dragOffsetRef.current.x, bounds.width - panelWidth - 8)),
         y: Math.max(8, Math.min(event.clientY - bounds.top - dragOffsetRef.current.y, bounds.height - panelHeight - 8)),
@@ -1406,7 +1445,10 @@ function MediaThumbnailRail({
     event.currentTarget.setPointerCapture(event.pointerId);
     const railBounds = railRef.current?.getBoundingClientRect();
     dragOffsetRef.current = railBounds
-      ? { x: event.clientX - railBounds.left, y: event.clientY - railBounds.top }
+      ? {
+          x: Math.max(0, Math.min(open ? 320 : 24, event.clientX - railBounds.left)),
+          y: Math.max(0, Math.min(open ? 32 : 24, event.clientY - railBounds.top)),
+        }
       : { x: 24, y: 24 };
     dragStartRef.current = { x: event.clientX, y: event.clientY };
     suppressToggleRef.current = false;
@@ -1417,6 +1459,10 @@ function MediaThumbnailRail({
   const finishDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!dragging) return;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
+    if (!suppressToggleRef.current) {
+      setDragging(false);
+      return;
+    }
     const bounds = railRef.current?.parentElement?.getBoundingClientRect();
     const next = bounds
       ? viewerPanelPlacementFromPoint(event.clientX, event.clientY, bounds)
@@ -1431,6 +1477,7 @@ function MediaThumbnailRail({
     : undefined;
 
   return (
+    <>
     <nav
       ref={railRef}
       style={floatingStyle}
@@ -1444,7 +1491,7 @@ function MediaThumbnailRail({
           aria-expanded={open}
           aria-label={open ? "メディア一覧を閉じる" : "メディア一覧を開く"}
           title={open ? "一覧を閉じる" : "一覧を開く"}
-          onPointerDown={!open && placement === "floating" ? startDrag : undefined}
+          onPointerDown={!open && placement === "floating" ? startDrag : () => { suppressToggleRef.current = false; }}
           onPointerMove={!open && placement === "floating" ? handleDragMove : undefined}
           onPointerUp={!open && placement === "floating" ? finishDrag : undefined}
           onPointerCancel={!open && placement === "floating" ? () => setDragging(false) : undefined}
@@ -1517,9 +1564,11 @@ function MediaThumbnailRail({
                   {candidate
                     ? <ThumbnailVisual item={candidate} />
                     : <span className="pv-viewer-rail-placeholder" aria-hidden="true"><Icon name="gallery" /></span>}
+                  {candidate && <span className={`pv-viewer-rail-type kind-${candidate.kind}`} title={mediaTypeLabel(candidate)}>
+                    <Icon name={candidate.kind === "video" ? "video" : candidate.kind === "pdf" || candidate.kind === "archive" ? "book" : "image"} />
+                  </span>}
                 </span>
                 <span className="pv-viewer-rail-name">{candidate?.name ?? "読み込み中…"}</span>
-                <b>{candidate ? mediaTypeLabel(candidate) : "LOAD"}</b>
               </button>
             );
           })}
@@ -1529,6 +1578,8 @@ function MediaThumbnailRail({
         {currentIndex >= 0 ? currentIndex + 1 : "—"} / {itemCount.toLocaleString("ja-JP")}
       </span>
     </nav>
+    {dragging && <ViewerPanelDropPreview host={railRef.current?.parentElement} placement={dragTarget} floatingPosition={floatingPosition} />}
+    </>
   );
 }
 
@@ -3405,8 +3456,12 @@ export function MediaViewer({
   onVisualReady,
 }: MediaViewerProps) {
   const [activeId, setActiveId] = useState(currentId);
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
   const [paintedId, setPaintedId] = useState<string>();
-  const surroundingsReady = !prioritizeVisual || paintedId === activeId;
+  // Only defer surroundings for the first visual in this viewer session.
+  // Subsequent files keep the mounted rail and its thumbnail cache intact.
+  const surroundingsReady = !prioritizeVisual || paintedId !== undefined;
   const visualReadyCallback = useRef(onVisualReady);
   visualReadyCallback.current = onVisualReady;
   const priorityRef = useRef(prioritizeVisual);
@@ -4155,9 +4210,13 @@ export function MediaViewer({
 
   const recycle = () => {
     void runAction("recycle", async () => {
+      // Keep the handle that belongs to the confirmed item, even if navigation
+      // changes videoRef while the neighboring collection page is being read.
+      const nativePlayback = videoRef.current instanceof VlcVideoHandle ? videoRef.current : undefined;
+      const browserPlayback = videoRef.current instanceof HTMLVideoElement ? videoRef.current : undefined;
       const prompt = `「${item.name}」をWindowsのごみ箱へ移動しますか？`;
-      const confirmed = videoRef.current instanceof VlcVideoHandle
-        ? await videoRef.current.confirm(prompt)
+      const confirmed = nativePlayback
+        ? await nativePlayback.confirm(prompt)
         : window.confirm(prompt);
       if (!confirmed) return;
       let nextCollectionIndex: number | undefined;
@@ -4186,14 +4245,35 @@ export function MediaViewer({
           ? items[currentIndex + 1] ?? items[currentIndex - 1]
           : viewerRailItems.find((candidate) => candidate.id !== item.id);
       }
-      const nativePlayback = videoRef.current instanceof VlcVideoHandle ? videoRef.current : undefined;
+      const browserSource = browserPlayback?.currentSrc || browserPlayback?.src;
+      const browserPosition = browserPlayback?.currentTime ?? 0;
+      const browserWasPaused = browserPlayback?.paused ?? true;
+      if (activeIdRef.current !== item.id) return "表示中のメディアが変わったため、ごみ箱への移動を中止しました。";
       // Wait for VLC to close the source handle before Windows moves the file.
       await nativePlayback?.dispose();
+      if (browserPlayback) {
+        browserPlayback.pause();
+        browserPlayback.removeAttribute("src");
+        browserPlayback.load();
+      }
+      if (activeIdRef.current !== item.id) return "表示中のメディアが変わったため、ごみ箱への移動を中止しました。";
       const result = await recycleMediaItem(item.id);
       const failure = resultError(result, "ごみ箱への移動はデスクトップアプリで利用できます。");
       if (failure || !result.data) {
         nativePlayback?.dispatchEvent(new Event("restart"));
+        if (browserPlayback && browserSource) {
+          browserPlayback.src = browserSource;
+          browserPlayback.addEventListener("loadedmetadata", () => {
+            browserPlayback.currentTime = browserPosition;
+            if (!browserWasPaused) void browserPlayback.play().catch(() => undefined);
+          }, { once: true });
+          browserPlayback.load();
+        }
         throw failure ?? new Error("ごみ箱へ移動できませんでした。");
+      }
+      if (activeIdRef.current !== item.id) {
+        onRemove(item.id);
+        return "ごみ箱に移動しました。";
       }
       if (nextItem) {
         // Move the local viewer first, then tell the parent which item should
@@ -4650,17 +4730,19 @@ export function MediaViewer({
             </div>
             <div className="pv-viewer-title-line">
               <h2 id="pv-viewer-title">{item.name}</h2>
-              {isImage && (
-                <div className="pv-viewer-title-zoom" role="toolbar" aria-label="画像の拡大縮小">
-                  <button type="button" aria-label="縮小（-）" title="縮小（-）" onClick={() => imageZoomRef.current?.zoomOut()}>−</button>
-                  <output title="画像本来の大きさに対する表示倍率">{imageZoomPercent}%</output>
-                  <button type="button" aria-label="拡大（+）" title="拡大（+）" onClick={() => imageZoomRef.current?.zoomIn()}>＋</button>
-                  <button type="button" title="等倍表示（1）" onClick={() => imageZoomRef.current?.showActualSize()}>等倍</button>
-                  <button type="button" title="画像全体を表示（0）" onClick={() => imageZoomRef.current?.showEntireImage()}>全体</button>
-                </div>
-              )}
             </div>
             <p title={item.path}>{item.path}</p>
+          </div>
+          <div className="pv-viewer-header-center">
+            {isImage && (
+              <div className="pv-viewer-title-zoom" role="toolbar" aria-label="画像の拡大縮小">
+                <button type="button" aria-label="縮小（-）" title="縮小（-）" onClick={() => imageZoomRef.current?.zoomOut()}>−</button>
+                <output title="画像本来の大きさに対する表示倍率">{imageZoomPercent}%</output>
+                <button type="button" aria-label="拡大（+）" title="拡大（+）" onClick={() => imageZoomRef.current?.zoomIn()}>＋</button>
+                <button type="button" title="等倍表示（1）" onClick={() => imageZoomRef.current?.showActualSize()}>等倍</button>
+                <button type="button" title="画像全体を表示（0）" onClick={() => imageZoomRef.current?.showEntireImage()}>全体</button>
+              </div>
+            )}
           </div>
           <div className="pv-viewer-header-meta">
             <div className="pv-rating-switch" aria-label="年齢区分">
@@ -4824,13 +4906,13 @@ export function MediaViewer({
           <div className="pv-book-controls">
             <button
               type="button"
-              onClick={() => currentBookIndex > 0 && changeActive(bookItems[currentBookIndex - 1].id)}
-              disabled={currentBookIndex <= 0}
+              onClick={() => currentBookIndex >= 0 && currentBookIndex < bookItems.length - 1 && changeActive(bookItems[currentBookIndex + 1].id)}
+              disabled={currentBookIndex < 0 || currentBookIndex >= bookItems.length - 1}
             >
-              <Icon name="stepBack" />前の本
+              <Icon name="stepBack" />次の本
             </button>
-            <button type="button" onClick={() => setPageIndex((current) => Math.max(0, current - bookPageStep))} disabled={pageIndex <= 0}>
-              <Icon name="arrowRight" className="pv-icon-reverse" />前のページ
+            <button type="button" onClick={() => setPageIndex((current) => Math.min(pageCount - 1, current + bookPageStep))} disabled={pageCount <= 0 || pageIndex + bookPageStep >= pageCount}>
+              <Icon name="arrowLeft" />次のページ
             </button>
             <span>
               {pageCount > 0
@@ -4839,15 +4921,15 @@ export function MediaViewer({
                   : `${pageIndex + 1} / ${pageCount}`
                 : "— / —"}
             </span>
-            <button type="button" onClick={() => setPageIndex((current) => Math.min(pageCount - 1, current + bookPageStep))} disabled={pageCount <= 0 || pageIndex + bookPageStep >= pageCount}>
-              次のページ<Icon name="arrowRight" />
+            <button type="button" onClick={() => setPageIndex((current) => Math.max(0, current - bookPageStep))} disabled={pageIndex <= 0}>
+              前のページ<Icon name="arrowRight" />
             </button>
             <button
               type="button"
-              onClick={() => currentBookIndex >= 0 && currentBookIndex < bookItems.length - 1 && changeActive(bookItems[currentBookIndex + 1].id)}
-              disabled={currentBookIndex < 0 || currentBookIndex >= bookItems.length - 1}
+              onClick={() => currentBookIndex > 0 && changeActive(bookItems[currentBookIndex - 1].id)}
+              disabled={currentBookIndex <= 0}
             >
-              次の本<Icon name="stepForward" />
+              前の本<Icon name="stepForward" />
             </button>
           </div>
         )}

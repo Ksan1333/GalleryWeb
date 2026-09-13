@@ -38,13 +38,13 @@
 }
 
 .book-viewer-settings h3 {
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .book-viewer-settings header p {
   margin-top: 4px;
   color: #9589a1;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .book-viewer-settings fieldset {
@@ -61,7 +61,7 @@
 .book-viewer-settings legend {
   margin-bottom: 8px;
   color: #ad9bbb;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -107,13 +107,13 @@
 }
 
 .book-viewer-settings fieldset button b {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .book-viewer-settings fieldset button small {
   overflow: hidden;
   color: #897c94;
-  font-size: 8px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -127,7 +127,7 @@
   padding: 8px 10px;
   color: #ffbdca;
   background: rgba(232, 93, 128, 0.1);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .book-viewer-settings.is-compact {
@@ -161,13 +161,13 @@
 
 .book-viewer-setting-toggle b,
 .book-viewer-setting-range b {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .book-viewer-setting-toggle small,
 .book-viewer-setting-range small {
   color: #897c94;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .book-viewer-setting-toggle input {
@@ -187,7 +187,7 @@
 
 .book-viewer-setting-range output {
   color: #d8bcfa;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
   text-align: right;
 }

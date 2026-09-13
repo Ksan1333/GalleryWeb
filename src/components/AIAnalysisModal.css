@@ -84,7 +84,7 @@
 .ai-analysis-eyebrow {
   margin: 0 0 3px;
   color: #9f91e9;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 750;
   letter-spacing: 0.18em;
 }
@@ -151,7 +151,7 @@
 .ai-analysis-selection p {
   max-width: 245px;
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
   text-align: right;
 }
@@ -184,19 +184,19 @@
 
 .ai-analysis-scope-heading strong {
   color: #f2f4fa;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .ai-analysis-scope-heading > div > span {
   color: #8f97a8;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-analysis-scope-heading > span {
   flex: 0 0 auto;
   padding: 4px 8px;
   color: #99e5bd;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 750;
   background: rgb(65 191 124 / 10%);
   border: 1px solid rgb(91 213 149 / 18%);
@@ -233,7 +233,7 @@
   justify-content: space-between;
   gap: 12px;
   color: #a8afbf;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-analysis-folder-tree-label > span {
@@ -243,7 +243,7 @@
 .ai-analysis-folder-tree-label small {
   overflow: hidden;
   color: #817a94;
-  font-size: 8px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -358,13 +358,13 @@
 }
 
 .ai-analysis-folder-choices strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-analysis-folder-choices small,
 .ai-analysis-folder-choices > p {
   color: #858d9e;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .ai-analysis-folder-choices > p {
@@ -407,7 +407,7 @@
 
 .ai-analysis-date-range label > span {
   color: #9ba3b4;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 680;
 }
 
@@ -418,7 +418,7 @@
   color: #eef1f7;
   color-scheme: dark;
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   background: rgb(255 255 255 / 4%);
   border: 1px solid rgb(255 255 255 / 10%);
   border-radius: 10px;
@@ -438,7 +438,7 @@
 .ai-analysis-date-range small {
   grid-column: 1 / -1;
   color: #ffb6bd;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-analysis-subfolder-toggle {
@@ -447,7 +447,7 @@
   align-items: center;
   gap: 8px;
   color: #bdc3d0;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -517,7 +517,7 @@
   margin-bottom: 2px;
   padding: 0;
   color: #d8dce6;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 720;
 }
 
@@ -574,19 +574,19 @@
 
 .ai-analysis-level-copy strong {
   color: #f4f6fb;
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .ai-analysis-level-copy > span {
   color: #b3a5ff;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .ai-analysis-level-copy small {
   margin-top: 5px;
   color: #969eaf;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.55;
 }
 
@@ -596,7 +596,7 @@
   right: 12px;
   padding: 3px 7px;
   color: #dcd4ff;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 750;
   background: rgb(118 85 255 / 20%);
   border: 1px solid rgb(159 140 255 / 22%);
@@ -658,7 +658,7 @@
   background: rgb(255 255 255 / 4%);
   cursor: pointer;
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 720;
 }
 
@@ -687,7 +687,7 @@
   margin: 2px 0 0;
   padding: 9px 11px;
   color: #b8c0cf;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.55;
   background: rgb(255 255 255 / 3%);
   border: 1px solid rgb(255 255 255 / 7%);
@@ -708,7 +708,7 @@
 .ai-analysis-category-counts span {
   padding: 4px 7px;
   color: #c9c0f9;
-  font-size: 10px;
+  font-size: 12px;
   background: rgb(118 85 255 / 10%);
   border: 1px solid rgb(151 128 255 / 17%);
   border-radius: 999px;
@@ -725,7 +725,7 @@
   overflow: hidden;
   margin: 0;
   color: #9da5b5;
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -743,7 +743,7 @@
   gap: 5px;
   padding: 5px 7px;
   color: #e1e4ec;
-  font-size: 10px;
+  font-size: 12px;
   background:
     linear-gradient(
       to left,
@@ -756,13 +756,13 @@
 
 .ai-analysis-tag-preview small {
   color: #a999f2;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 750;
 }
 
 .ai-analysis-tag-preview strong {
   color: #baf1d0;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
@@ -773,20 +773,20 @@
 }
 
 .ai-analysis-model-name {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
 }
 
 .ai-analysis-model-meta {
   color: #929aac;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .ai-analysis-model-state {
   flex: 0 0 auto;
   padding: 5px 9px;
   color: #d2c9ff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   background: rgb(118 85 255 / 15%);
   border: 1px solid rgb(147 124 255 / 26%);
@@ -802,7 +802,7 @@
 .ai-analysis-model-card p {
   margin: 13px 0 9px;
   color: #aab1c1;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.65;
 }
 
@@ -810,7 +810,7 @@
   margin-top: 8px;
   padding: 9px 10px;
   color: #9791a7;
-  font-size: 10px;
+  font-size: 12px;
   background: rgb(118 85 255 / 6%);
   border: 1px solid rgb(151 128 255 / 12%);
   border-radius: 10px;
@@ -818,7 +818,7 @@
 
 .ai-analysis-model-card a {
   color: #aa99ff;
-  font-size: 12px;
+  font-size: 14px;
   text-decoration: none;
 }
 
@@ -829,12 +829,12 @@
 .ai-analysis-progress-copy {
   margin-bottom: 11px;
   color: #cbd0dc;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .ai-analysis-progress-copy strong {
   color: #f4f6fb;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .ai-analysis-progress-track {
@@ -902,14 +902,14 @@
 
 .ai-analysis-current-media small {
   color: #736c80;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .ai-analysis-current-name {
   overflow: hidden;
   margin: 0;
   color: #c4bacf;
-  font-size: 11px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -918,14 +918,14 @@
   justify-content: flex-start;
   margin-top: 11px;
   color: #9fa7b7;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .ai-analysis-error {
   margin: 0;
   padding: 11px 13px;
   color: #ffb6bd;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
   background: rgb(219 67 83 / 10%);
   border: 1px solid rgb(239 96 111 / 20%);
@@ -935,7 +935,7 @@
 .ai-analysis-note {
   margin: 0;
   color: #858d9f;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.55;
 }
 
@@ -951,7 +951,7 @@
   padding: 0 17px;
   color: #eff2f8;
   font: inherit;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 680;
   border-radius: 11px;
   cursor: pointer;

@@ -33,8 +33,13 @@ const server = await createServer({
         window.__theme('light');
         const noop = () => {};
         function Fixture() {
-          const [currentId, setId] = React.useState('book-1');
+          const direct = new URLSearchParams(location.search).has('direct');
+          const [currentId, setId] = React.useState(direct ? 'video-0' : 'book-1');
           const books = [0,1,2].map(i => window.__fixture.makeItem(i, 'archive'));
+          if (direct) return React.createElement(MediaViewer, {
+            items:[0,1,2].map(i => window.__fixture.makeItem(i)), currentId, onClose:noop,
+            onItemPatch:noop, onRemove:noop, onCurrentIdChange:setId, prioritizeVisual:'direct-fixture',
+          });
           if (new URLSearchParams(location.search).has('order')) return React.createElement(MediaViewer, {
             items:books, currentId, onClose:noop, onItemPatch:noop, onRemove:noop, onCurrentIdChange:setId,
             collection:{query:{sortBy:'name',sortDirection:'asc',kinds:['archive']}, totalCount:3,
@@ -165,6 +170,35 @@ try {
     'a right-docked minimized recommendation panel keeps the edge-tab shape');
   assert.ok(initialRailBox&&initialRailBox.width>initialRailBox.height*2,
     'a bottom-docked minimized list keeps the edge-tab shape');
+  const dragPanel = async (panel, handleName, target) => {
+    const handleLocator=page.getByRole('button',{name:handleName,exact:true});
+    await handleLocator.hover();
+    const grid=await page.locator('.pv-viewer-content-grid').boundingBox();
+    const handle=await handleLocator.boundingBox();
+    const point=target==='left'?{x:grid.x+12,y:grid.y+grid.height/2}
+      :target==='right'?{x:grid.x+grid.width-12,y:grid.y+grid.height/2}
+      :target==='top'?{x:grid.x+grid.width/2,y:grid.y+12}
+      :{x:grid.x+grid.width/2,y:grid.y+grid.height-12};
+    await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);
+    await page.mouse.down();
+    await page.mouse.move(point.x,point.y,{steps:3});
+    const preview=page.locator('.pv-viewer-panel-drop-preview');
+    await preview.waitFor();
+    assert.equal(await preview.evaluate(el=>el.parentElement.classList.contains('pv-viewer-content-grid')),true,
+      'preview is anchored to the destination grid, outside transformed/docked panels');
+    const box=await preview.boundingBox();
+    if(target==='left')assert.ok(Math.abs(box.x-grid.x-8)<2,'left preview belongs at the left destination');
+    if(target==='right')assert.ok(Math.abs(box.x+box.width-grid.x-grid.width+8)<2,'right preview belongs at the right destination');
+    if(target==='top')assert.ok(Math.abs(box.y-grid.y-8)<2,'top preview belongs at the top destination');
+    if(target==='bottom')assert.ok(Math.abs(box.y+box.height-grid.y-grid.height+8)<2,'bottom preview belongs at the bottom destination');
+    await page.mouse.up();
+    await page.locator(panel+'.placement-'+target).waitFor();
+    assert.equal(await preview.count(),0,'drop completes and removes preview');
+  };
+  await dragPanel('.pv-media-info-panel','情報とレコメンドをドラッグして移動','left');
+  await dragPanel('.pv-media-info-panel','情報とレコメンドをドラッグして移動','right');
+  await dragPanel('.pv-viewer-rail','メディア一覧をドラッグして移動','top');
+  await dragPanel('.pv-viewer-rail','メディア一覧をドラッグして移動','bottom');
   await page.getByRole('button',{name:'情報とレコメンドを開く'}).click();
   await page.getByRole('button',{name:'メディア一覧を開く'}).click();
   await page.locator('.pv-media-info-list dd').first().waitFor();
@@ -207,7 +241,10 @@ try {
   }
   const surface=page.locator('.pv-video-surface');
   const time=()=>page.evaluate(()=>window.__fixture.playback.time);
-  const reset=async()=>{await page.evaluate(()=>window.__fixture.playback.time=60);await page.waitForTimeout(500)};
+  const reset=async()=>{
+    await page.evaluate(()=>window.__fixture.playback.time=60);
+    await page.waitForFunction(()=>Number(document.querySelector('.pv-video-seek input').value)===60);
+  };
   const bounds=await surface.boundingBox();
   await page.waitForFunction(()=>window.__fixture.listeners['pixvault://vlc-input/viewer-job']);
   await page.evaluate(async()=>{
@@ -247,9 +284,18 @@ try {
     for(const s of samples)assert.ok(!s.missing&&s.ratio>=4.5,JSON.stringify(s));
     await reset();
     const pauses=await page.evaluate(()=>window.__fixture.pauseCalls);
-    await surface.click({position:{x:bounds.width*.2,y:bounds.height*.5}});
-    await page.waitForTimeout(350);
-    await surface.click({position:{x:bounds.width*.2,y:bounds.height*.5}});
+    await page.evaluate(async()=>{
+      // Keep the intended 350ms gap inside the browser; Playwright actionability
+      // and IPC overhead must not accidentally turn it into two >450ms taps.
+      const surface=document.querySelector('.pv-video-surface'),rect=surface.getBoundingClientRect();
+      const tap=()=>{
+        for(const type of ['pointerdown','pointerup'])surface.dispatchEvent(new PointerEvent(type,{
+          bubbles:true,pointerId:11,pointerType:'mouse',isPrimary:true,button:0,
+          clientX:rect.x+rect.width*.2,clientY:rect.y+rect.height*.5,
+        }));
+      };
+      tap();await new Promise(resolve=>setTimeout(resolve,350));tap();
+    });
     await page.waitForTimeout(500);
     assert.equal(await time(),50,'slow double tap seeks backwards without toggling playback');
     assert.equal(await page.evaluate(()=>window.__fixture.pauseCalls),pauses);
@@ -277,6 +323,37 @@ try {
     assert.equal(await page.evaluate(()=>window.__fixture.pauseCalls),pauses+1,'close cancels pending single tap');
     assert.deepEqual(await page.evaluate(()=>window.__fixture.unexpected),[]);
     console.log('Viewer interactions passed: 20 themed info panels; mouse/touch/slow/single/drag/cancel/keyboard/close.');
+  }
+  if(!diagnose) {
+    await page.goto(base+'?direct');
+    await page.getByRole('button',{name:'メディア一覧を開く'}).click();
+    await page.locator('.pv-viewer-rail-name').first().waitFor();
+    await page.evaluate(()=>{
+      window.__retainedRail=document.querySelector('.pv-viewer-rail');
+      window.__retainedThumbnail=document.querySelector('.pv-viewer-rail-visual img');
+      window.__railRemovals=0;
+      window.__railObserver=new MutationObserver(records=>{
+        for(const record of records)for(const node of record.removedNodes) {
+          if(node===window.__retainedRail||node.contains?.(window.__retainedRail))window.__railRemovals++;
+        }
+      });
+      window.__railObserver.observe(document.querySelector('.pv-viewer-content-grid'),{childList:true,subtree:true});
+      window.__railCalls=window.__fixture.calls.length;
+    });
+    await page.locator('.pv-viewer-rail-track > button').nth(1).click();
+    await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='2.webm');
+    await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(()=>window.__railRemovals),0,'direct-open navigation never unmounts the rail while the next media loads');
+    assert.equal(await page.evaluate(()=>window.__retainedThumbnail===document.querySelector('.pv-viewer-rail-visual img')),true,
+      'already-loaded rail thumbnails keep their DOM and decoded image');
+    assert.equal(await page.evaluate(()=>window.__fixture.calls.slice(window.__railCalls).filter(c=>c.command==='get_media_thumbnails'||c.command==='get_media_thumbnail').length),0,
+      'switching files does not request the existing thumbnails again');
+    await page.evaluate(()=>window.__railObserver.disconnect());
+    await page.goto(base+'?order');
+    await page.getByRole('button',{name:'次の本',exact:true}).waitFor();
+    assert.deepEqual(await page.locator('.pv-book-controls button').allTextContents(),['次の本','次のページ','前のページ','前の本'],
+      'book navigation places next page/book on the left and previous page/book on the right');
+    console.log('Dock destinations, direct-open rail preservation and RTL book controls passed.');
   }
   if(diagnose) {
     await page.goto(base+'?order');

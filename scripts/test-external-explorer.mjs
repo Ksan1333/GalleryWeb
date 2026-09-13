@@ -26,6 +26,7 @@ const server = await createServer({
             query: props.collection?.query, totalCount: props.collection?.totalCount,
             indexed: props.collection?.indexedItems.map(([index, item]) => [index, item.id]),
             itemIds: props.items.map(item => item.id) };
+          window.__externalFixture.viewerStates.push(snapshot);
           return React.createElement('section', {role:'dialog', 'aria-modal':true,
             'aria-label':'External viewer fixture', style:{position:'fixed', inset:40, zIndex:99999, background:'#222'}},
             React.createElement('output', {'data-testid':'viewer-state'}, JSON.stringify(snapshot)),
@@ -90,7 +91,7 @@ const server = await createServer({
 
 function installNativeFixture() {
   const image = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#b892ec"/></svg>');
-  const stats = window.__externalFixture = { calls: [], unexpected: [], viewerMounts: 0 };
+  const stats = window.__externalFixture = { calls: [], unexpected: [], viewerMounts: 0, viewerStates: [] };
   const cold = new URLSearchParams(location.search).has('cold');
   if (cold) { stats.deferImage = true; stats.holdBrowse = true; }
   stats.makeItem = (folder = "", index, extended = false) => ({
@@ -164,6 +165,7 @@ try {
   page.setDefaultTimeout(20_000);
   const errors = [];
   page.on("pageerror", error => { errors.push(error.message); console.error(error.message); });
+  page.on("console", message => { if (message.type() === "error") console.error(message.text()); });
   await page.route("**/*", route => new URL(route.request().url()).hostname === "127.0.0.1" ? route.continue() : route.abort());
   await page.addInitScript(installNativeFixture);
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__external_explorer_test`);
@@ -239,9 +241,14 @@ try {
     await tick();
     assert.equal(await page.evaluate(() => window.__firstViewerImage === document.querySelector('.pv-viewer-main img')), true, 'hydrate the same viewer, never reopen or decode again');
     assert.equal(await page.evaluate(() => window.__externalFixture.calls.filter(call => call.command === 'browse_file_system').every(call => call.at > window.__externalFixture.visualLoadedAt)), true);
-    await page.evaluate(() => window.__sendExternal('same-visible-image-again', 'Books', 900));
-    await page.waitForFunction(() => window.__externalFixture.calls.filter(call => call.command === 'get_media_item_index').length === 2);
+    await page.evaluate(() => {
+      window.__firstViewerRail = document.querySelector('.pv-viewer-rail');
+      window.__sendExternal('same-visible-image-again', 'Books', 900);
+    });
+    await tick();
+    assert.equal(await ranks(), 1, 'reopening an already positioned file retains its known folder rank');
     assert.equal(await page.evaluate(() => window.__firstViewerImage === document.querySelector('.pv-viewer-main img')), true, 'a new request for the already displayed file does not get stuck waiting for another image load');
+    assert.equal(await page.evaluate(() => window.__firstViewerRail === document.querySelector('.pv-viewer-rail')), true, 'reopening retains the mounted rail and its thumbnails');
     await page.getByRole('button', {name:'閉じる', exact:true}).first().click();
     await page.getByRole('dialog').waitFor({state:'detached'});
     assert.match(await page.getByRole('textbox', {name:'フォルダーのパス'}).inputValue(), /Books$/);
@@ -306,24 +313,29 @@ try {
   assert.ok(beforeClose.length <= 3 && beforeClose.every(offset => offset < 128 || offset >= 896), "opening a deep item must not load 900 preceding files");
   await page.getByRole("button", {name:"Next fixture media"}).click();
   assert.equal((await state()).currentIndex, 901);
+  await page.evaluate(() => { window.__externalFixture.viewerStates = []; });
+  await open("same-current-reopen", "Books", 901);
+  assert.equal(await ranks(), 1, "reopening the viewer's current file reuses its known rank");
+  assert.ok(await page.evaluate(() => window.__externalFixture.viewerStates.every(value => value.totalCount === 1000)),
+    "same-folder known-file external open never detaches and reloads the viewer collection");
   const deepPosition = await closeAndCheckPosition("Books", 901);
   assert.ok(deepPosition.top > 1000, "deep target restoration must not remain at the first row");
   assert.equal(await ranks(), 1);
   console.log("PASS deep external item: rank900/1000, bounded paging, viewer next901, parent folder and scroll retained");
 
   await open("same-parent-second", "Books", 950);
-  assert.equal(await ranks(), 2);
+  assert.equal(await ranks(), 1, "a neighboring cached folder page already supplies the new file rank");
   await page.evaluate(() => window.__rerenderExternalParent());
   await tick();
-  assert.equal(await ranks(), 2, "same request is resolved only once despite new prop objects");
+  assert.equal(await ranks(), 1, "same request remains positioned despite new prop objects");
   await closeAndCheckPosition("Books", 950);
   await open("other-parent-third", "Other", 25);
-  assert.equal(await ranks(), 3);
+  assert.equal(await ranks(), 2);
   await closeAndCheckPosition("Other", 25);
-  console.log("PASS second requests: same/different parent, exactly one rank lookup per request");
+  console.log("PASS second requests: same-folder cache is retained without rank lookup; another folder resolves its rank once");
 
   await open("extended-drive", "", 900, true);
-  assert.equal(await ranks(), 4);
+  assert.equal(await ranks(), 3);
   await closeAndCheckPosition("", 900);
   await page.getByRole("button", {name:"戻る", exact:true}).click();
   await page.waitForFunction(() => document.querySelector('[aria-label="フォルダーのパス"]').value.endsWith("Other"));
@@ -338,7 +350,7 @@ try {
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("pixvault:navigate-back", {detail:{handled:false}, cancelable:true})));
   await page.waitForFunction(() => document.querySelector('[aria-label="フォルダーのパス"]').value.endsWith("Other"));
   assert.equal(await page.getByRole("dialog").count(), 0, "history traversal must not replay consumed external requests");
-  assert.equal(await ranks(), 5);
+  assert.equal(await ranks(), 4);
   assert.equal(await page.evaluate(() => window.__externalFixture.viewerMounts), 5);
   assert.deepEqual(await page.evaluate(() => window.__externalFixture.unexpected), []);
   assert.deepEqual(errors, []);

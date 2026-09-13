@@ -26,12 +26,12 @@
 
 .gallery-display-setting-row strong {
   color: #f2eafa;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .gallery-display-setting-row small {
   color: #8f819c;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .gallery-display-segments {
@@ -51,7 +51,7 @@
   background: rgba(255, 255, 255, .025);
   cursor: pointer;
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .gallery-display-segments button:hover,
@@ -70,7 +70,7 @@
   margin: 0;
   padding: 0 15px 12px;
   color: #ff9ea8;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 @media (max-width: 780px) {

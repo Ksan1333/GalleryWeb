@@ -109,7 +109,7 @@
 .ai-monitor-brand small,
 .ai-monitor-section-heading > div > span {
   color: #9a8bab;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.16em;
 }
@@ -117,7 +117,7 @@
 .ai-monitor-brand strong {
   margin-top: 2px;
   overflow: hidden;
-  font-size: 13px;
+  font-size: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -211,7 +211,7 @@
 
 .ai-monitor-normal-current section strong {
   overflow: hidden;
-  font-size: 12px;
+  font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -219,7 +219,7 @@
 .ai-monitor-normal-current section span,
 .ai-monitor-normal-meta {
   color: #978b9f;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-monitor-normal-current > b {
@@ -266,7 +266,7 @@
   padding: 0 9px;
   color: #ffb4b8;
   background: rgb(241 83 91 / 8%);
-  font-size: 10px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -392,13 +392,13 @@
 
 .ai-monitor-minimized small {
   color: #8e819b;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.15em;
 }
 
 .ai-monitor-minimized strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .ai-monitor-expanded {
@@ -432,7 +432,7 @@
 
 .ai-monitor-expanded-header .ai-monitor-brand h2 {
   margin: 1px 0 0;
-  font-size: 17px;
+  font-size: 19px;
   letter-spacing: -0.02em;
 }
 
@@ -449,7 +449,7 @@
   padding: 5px 10px;
   color: #84e9c2;
   background: rgb(68 205 153 / 8%);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -524,7 +524,7 @@
 .ai-monitor-stat > span {
   grid-column: 1 / -1;
   color: #93879d;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -537,7 +537,7 @@
 .ai-monitor-stat small {
   align-self: end;
   color: #6f6677;
-  font-size: 8px;
+  font-size: 12px;
   letter-spacing: 0.1em;
 }
 
@@ -560,7 +560,7 @@
   align-items: center;
   gap: 6px;
   color: #93879d;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-monitor-time-stat svg {
@@ -573,7 +573,7 @@
 
 .ai-monitor-time-stat small {
   color: #a89db0;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-monitor-dashboard-grid {
@@ -604,12 +604,12 @@
 
 .ai-monitor-section-heading h3 {
   margin: 1px 0 0;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .ai-monitor-section-heading > strong {
   color: #9c90a5;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-monitor-load-legend {
@@ -622,7 +622,7 @@
   position: relative;
   padding-left: 10px;
   color: #8c8194;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .ai-monitor-load-legend > span::before {
@@ -666,7 +666,7 @@
 
 .ai-monitor-chart text {
   fill: rgb(183 171 193 / 48%);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .ai-monitor-chart polyline {
@@ -693,7 +693,7 @@
   display: grid;
   place-items: center;
   color: #776d7e;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-monitor-memory-copy {
@@ -702,7 +702,7 @@
   justify-content: space-between;
   margin-top: 9px;
   color: #8f8497;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .ai-monitor-memory-copy strong {
@@ -751,7 +751,7 @@
   padding: 3px 7px;
   color: #d0adff;
   background: rgb(161 95 248 / 12%);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -763,12 +763,12 @@
 }
 
 .ai-monitor-current-media section > strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .ai-monitor-current-media section > small {
   color: #817787;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .ai-monitor-current-message {
@@ -776,7 +776,7 @@
   border-left: 2px solid rgb(176 112 255 / 45%);
   padding-left: 9px;
   color: #a69baa;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ai-monitor-error,
@@ -784,7 +784,7 @@
   margin: 9px 0 0;
   border-radius: 8px;
   padding: 7px 9px;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .ai-monitor-error {
@@ -852,7 +852,7 @@
   padding: 2px 5px;
   color: #dcefe8;
   background: rgb(22 34 30 / 88%);
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 800;
   backdrop-filter: blur(8px);
 }
@@ -882,12 +882,12 @@
 }
 
 .ai-monitor-completed-copy > strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .ai-monitor-completed-copy > small {
   color: #756c7b;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .ai-monitor-completed-tags {
@@ -917,7 +917,7 @@
       rgb(255 255 255 / 3%) var(--confidence),
       rgb(255 255 255 / 3%) 100%
     );
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .ai-monitor-completed-tags b {
@@ -930,7 +930,7 @@
 
 .ai-monitor-completed-tags em {
   color: #83e4bb;
-  font-size: 7px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 800;
 }
@@ -961,11 +961,11 @@
 
 .ai-monitor-results-empty strong {
   color: #c9bdcf;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .ai-monitor-results-empty span {
-  font-size: 9px;
+  font-size: 12px;
 }
 
 @keyframes ai-monitor-pulse {
@@ -1042,7 +1042,7 @@
 
   .ai-monitor-header-status strong {
     min-width: auto;
-    font-size: 17px;
+    font-size: 19px;
   }
 
   .ai-monitor-dashboard {

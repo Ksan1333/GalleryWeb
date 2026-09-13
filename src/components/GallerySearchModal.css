@@ -11,6 +11,9 @@
 }
 
 .gallery-search-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
   width: min(820px, calc(100vw - 56px));
   max-height: min(880px, calc(100vh - 56px));
   overflow: hidden;
@@ -27,7 +30,8 @@
 .gallery-search-dialog > form {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  max-height: calc(min(880px, 100vh - 56px) - 78px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .gallery-search-header {
@@ -73,7 +77,7 @@
 .gallery-search-heading p {
   margin-bottom: 3px;
   color: #ae8edc;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.14em;
 }
@@ -81,7 +85,7 @@
 .gallery-search-heading h2 {
   overflow: hidden;
   color: #faf7ff;
-  font-size: 18px;
+  font-size: 20px;
   letter-spacing: -0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -112,7 +116,10 @@
 }
 
 .gallery-search-body {
+  min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
+  scroll-padding-block: 22px;
   padding: 22px;
   scrollbar-color: rgba(185, 141, 246, 0.42) transparent;
   scrollbar-width: thin;
@@ -126,7 +133,7 @@
 
 .gallery-search-query > span {
   color: #d9c9ee;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -167,7 +174,7 @@
 }
 
 .gallery-search-query input {
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .gallery-search-query input::placeholder,
@@ -211,7 +218,7 @@
   gap: 7px;
   padding: 0;
   color: #e8ddf8;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 750;
 }
 
@@ -225,7 +232,7 @@
 .gallery-search-tags-heading > p {
   margin: 6px 0 12px;
   color: #92869f;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -281,7 +288,7 @@
 
 .gallery-search-format strong {
   margin-top: 9px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .gallery-search-format small {
@@ -289,7 +296,7 @@
   width: 100%;
   margin-top: 2px;
   color: #8f829d;
-  font-size: 9px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -347,13 +354,13 @@
 }
 
 .gallery-search-period-options strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .gallery-search-period-options small {
   overflow: hidden;
   color: #887a97;
-  font-size: 8px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -387,7 +394,7 @@
 
 .gallery-search-date-range label span {
   color: #ad9cbe;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 750;
 }
 
@@ -402,7 +409,7 @@
   color-scheme: dark;
   background: rgba(10, 7, 14, 0.72);
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .gallery-search-date-range input:focus {
@@ -420,7 +427,7 @@
 .gallery-search-date-range > small {
   grid-column: 1 / -1;
   color: #f1a3ad;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .gallery-search-date-range.is-invalid {
@@ -471,7 +478,7 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .gallery-search-choice-list > button > span > svg {
@@ -521,7 +528,7 @@
   align-items: center;
   gap: 6px;
   color: #bca9d3;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.04em;
 }
@@ -562,7 +569,7 @@
   color: #f0e7fc;
   background: transparent;
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .gallery-search-subfolder-heading input::placeholder {
@@ -607,7 +614,7 @@
   background: transparent;
   cursor: pointer;
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .gallery-search-folder-breadcrumbs button:hover,
@@ -636,7 +643,7 @@
 
 .gallery-search-folder-copy small {
   color: #9988aa;
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.01em;
 }
 
@@ -679,7 +686,7 @@
   padding: 2px 6px;
   color: #a995bf;
   background: rgba(169, 120, 235, 0.1);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 750;
   text-align: center;
 }
@@ -696,7 +703,7 @@
   justify-content: center;
   gap: 7px;
   color: #a995bd;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .gallery-search-inline-loading .spinner {
@@ -711,7 +718,7 @@
   gap: 6px;
   margin-top: 7px;
   color: #ffc4d0;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .gallery-search-folder-error svg {
@@ -726,7 +733,7 @@
 
 .gallery-search-rating-list small {
   color: #897c96;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .gallery-search-rating-list .rating-sfw.active {
@@ -783,7 +790,7 @@
 }
 
 .gallery-search-tags-heading input {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .gallery-search-tag-list {
@@ -811,7 +818,7 @@
   color: #b5a5c7;
   background: rgba(167, 123, 243, 0.055);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .gallery-search-tag-list > button:hover {
@@ -843,7 +850,7 @@
   align-self: center;
   padding: 5px 7px;
   color: #7f748b;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .gallery-search-loading,
@@ -855,7 +862,7 @@
   margin-top: 12px;
   border-radius: 10px;
   padding: 8px 10px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .gallery-search-loading {
@@ -905,12 +912,12 @@
   border-radius: 8px;
   color: #eadbff;
   background: rgba(172, 119, 241, 0.16);
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .gallery-search-footer > div:first-child span {
   color: #8f829d;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .gallery-search-footer button {
@@ -919,7 +926,7 @@
   padding: 0 13px;
   cursor: pointer;
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -981,9 +988,22 @@
     max-height: calc(100vh - 32px);
   }
 
-  .gallery-search-dialog > form {
-    max-height: calc(100vh - 110px);
-  }
+}
+
+@media (max-width: 620px) {
+  .gallery-search-backdrop { padding: 12px; }
+  .gallery-search-dialog { width: 100%; max-height: calc(100dvh - 24px); }
+  .gallery-search-header { gap: 10px; padding: 14px; }
+  .gallery-search-heading-icon { display: none; }
+  .gallery-search-body { padding: 16px; }
+  .gallery-search-split { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .gallery-search-format-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gallery-search-period-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .gallery-search-footer { flex-wrap: wrap; gap: 10px; padding: 12px; }
+  .gallery-search-footer > div:last-child { flex: 1 1 100%; justify-content: flex-end; }
+  .gallery-search-footer button { padding-inline: 9px; }
+  .gallery-search-tags-heading { align-items: stretch; flex-direction: column; gap: 8px; margin-block: 8px; }
+  .gallery-search-tags-heading > label { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

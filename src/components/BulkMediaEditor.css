@@ -36,7 +36,7 @@
 
 .bulk-media-editor > header span {
   color: #b88bf0;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: .18em;
 }
@@ -49,7 +49,7 @@
 .bulk-media-editor > header p {
   margin: 0;
   color: #a99ab8;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .bulk-media-editor > header > button {
@@ -136,12 +136,12 @@
 }
 
 .bulk-media-section-heading strong {
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .bulk-media-section-heading small {
   color: #9989aa;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .bulk-media-section-heading > button {
@@ -151,7 +151,7 @@
   background: transparent;
   cursor: pointer;
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .bulk-rating-options {
@@ -182,13 +182,13 @@
 }
 
 .bulk-rating-options > button span {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
 .bulk-rating-options > button small {
   color: #9686a6;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .bulk-rating-options > button svg {
@@ -206,7 +206,7 @@
   gap: 7px;
   color: #cfc0de;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -234,7 +234,7 @@
   background: transparent;
   cursor: pointer;
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 750;
 }
 
@@ -261,7 +261,7 @@
   color: #f1e8fc;
   background: rgba(8, 6, 12, .52);
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .bulk-tag-create input:focus {
@@ -278,7 +278,7 @@
   background: rgba(165, 105, 225, .14);
   cursor: pointer;
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -307,7 +307,7 @@
   background: rgba(255, 255, 255, .028);
   cursor: pointer;
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .bulk-tag-options > button:hover,
@@ -333,7 +333,7 @@
 .bulk-media-loading {
   margin: 7px;
   color: #92839f;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .bulk-media-loading {
@@ -355,7 +355,7 @@
 .bulk-tag-summary {
   margin: 10px 2px 0;
   color: #ae9bbb;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .bulk-media-editor-error {
@@ -368,7 +368,7 @@
   padding: 10px 12px;
   color: #ffabb9;
   background: rgba(123, 26, 50, .13);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .bulk-media-editor-error svg {

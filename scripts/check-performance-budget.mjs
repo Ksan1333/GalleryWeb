@@ -24,8 +24,9 @@ const budgets = {
   // 0.3.0 adds 8 KiB for the lazy libVLC canvas/IPC bridge and release notes.
   // 0.5.0 adds 10 KiB for lazy movable panels and unified gallery controls.
   // 0.6.0 adds 8 KiB for lazy viewer chrome controls and release history.
+  // 0.7.0 adds 14 KiB for lazy properties, stable panel hydration and clip handling.
   // Startup and individual chunk limits stay unchanged.
-  totalAssetBytes: 2654 * 1024,
+  totalAssetBytes: 2668 * 1024,
 };
 
 function fail(message) {

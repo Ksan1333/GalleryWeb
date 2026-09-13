@@ -45,7 +45,7 @@
 .extra-modal-dialog > header p:not(.kicker) {
   margin: 7px 0 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.6;
 }
 
@@ -84,7 +84,7 @@
 
 .extra-modal-selection-actions > span {
   color: #c4b3d8;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -144,14 +144,14 @@
 
 .reference-source-options > button > strong {
   align-self: end;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .reference-source-options > button > small {
   align-self: start;
   overflow: hidden;
   color: #a99bb8;
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -171,7 +171,7 @@
 
 .extra-labelled-field > span {
   color: #c9b9db;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.04em;
 }
@@ -189,7 +189,7 @@
   color: #f7f4ff;
   background: rgba(0, 0, 0, 0.18);
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .extra-labelled-field input:focus,
@@ -201,7 +201,7 @@
 
 .field-error {
   color: #ffabbc;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .reference-url-form {
@@ -219,7 +219,7 @@
 
 .reference-url-preview > span {
   color: #a994c2;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 850;
   letter-spacing: 0.12em;
 }
@@ -243,7 +243,7 @@
 .reference-url-preview > small {
   overflow: hidden;
   color: #ad9cbc;
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -268,7 +268,7 @@
 
 .reference-preview-fallback span {
   margin: 0;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .reference-gallery-picker {
@@ -364,7 +364,7 @@
   padding: 3px 6px;
   color: #f7f1ff;
   background: rgba(14, 10, 19, 0.78);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .reference-gallery-visual > i {
@@ -404,13 +404,13 @@
 
 .reference-gallery-grid > button > strong {
   margin-top: 9px;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .reference-gallery-grid > button > small {
   margin-top: 4px;
   color: #9f91ad;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .reference-gallery-more {
@@ -439,7 +439,7 @@
 
 .reference-gallery-more > small {
   color: #9f91ad;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .utility-form-card.creator-draft-card {
@@ -523,7 +523,7 @@
 .creator-draft-heading > div > span {
   margin-top: 4px;
   color: #aa99b9;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -552,7 +552,7 @@
 
 .creator-name-field input {
   min-height: 46px;
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .creator-link-editor {
@@ -611,14 +611,14 @@
 }
 
 .creator-link-editor > header strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .creator-link-editor > header small {
   margin-top: 2px;
   overflow: hidden;
   color: #897c96;
-  font-size: 8px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -630,7 +630,7 @@
   padding: 4px 7px;
   color: #ad8cd4;
   background: rgba(169, 115, 237, 0.07);
-  font-size: 7px;
+  font-size: 12px;
   letter-spacing: 0.08em;
 }
 
@@ -661,7 +661,7 @@
 .creator-draft-number {
   align-self: center;
   color: #8f7da2;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-align: center;
@@ -675,7 +675,7 @@
 
 .creator-draft-field > span {
   color: #8f80a0;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -756,9 +756,9 @@
   grid-column: 1;
   grid-row: 1;
   color: #f1e8ff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 900;
-  line-height: 14px;
+  line-height: 16px;
 }
 
 .creator-search-button > svg {
@@ -773,7 +773,7 @@
   grid-row: 2;
   margin-top: 1px;
   color: #9d88ba;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 750;
   white-space: nowrap;
 }
@@ -805,14 +805,14 @@
 
 .creator-draft-actions > span {
   color: #94859f;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .creator-draft-actions > span strong {
   display: inline;
   margin: 0 4px;
   color: #dcc9f4;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .creator-draft-actions svg {
@@ -870,13 +870,13 @@
 }
 
 .creator-add-link-row strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .creator-add-link-row small {
   margin-top: 2px;
   color: #887a93;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .creator-add-link-row > svg {
@@ -939,7 +939,7 @@
 .reference-state-card p {
   margin: 0 0 2px;
   color: #92c99f;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 850;
   letter-spacing: 0.12em;
 }
@@ -949,13 +949,13 @@
 }
 
 .reference-state-card strong {
-  font-size: 13px;
+  font-size: 15px;
 }
 
 .reference-state-card > div > span {
   margin-top: 3px;
   color: #a99ab8;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -967,7 +967,7 @@
 .reference-list-status-button {
   min-height: 34px;
   padding-inline: 10px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .reference-list-status-button svg {
@@ -989,7 +989,7 @@
   padding: 3px 6px;
   color: #f1e7ff !important;
   background: rgba(14, 10, 19, 0.78);
-  font-size: 8px !important;
+  font-size: 12px !important;
 }
 
 .reference-path-link {
@@ -1000,7 +1000,7 @@
   overflow: hidden;
   margin: 4px 0 10px;
   color: #b89ae4;
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1027,7 +1027,7 @@
   gap: 7px;
   margin: 10px 0 0;
   color: #81758c;
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -1211,7 +1211,7 @@
 
 .x-selection-header strong {
   color: #f2ebff;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .x-selection-header p:last-child {
@@ -1220,7 +1220,7 @@
   max-width: 760px;
   margin: 7px 0 0;
   color: #aa9cb8;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -1314,7 +1314,7 @@
   padding: 4px 7px;
   color: #c8f4df;
   background: rgba(27, 75, 56, 0.9);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -1325,7 +1325,7 @@
   height: 24px;
   border-radius: 7px;
   padding: 0 6px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -1334,7 +1334,7 @@
   bottom: 8px;
   border-radius: 6px;
   padding: 4px 7px;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -1391,12 +1391,12 @@
 
 .x-media-choice-body strong {
   color: #eee5f8;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .x-media-choice-body small {
   color: #8f829d;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .x-quality-select {
@@ -1414,13 +1414,13 @@
 
 .x-selection-footer > span {
   color: #9d90aa;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .x-selection-footer > span strong {
   margin-right: 3px;
   color: #e3d2f8;
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .saved-link-list article.x-history-item {

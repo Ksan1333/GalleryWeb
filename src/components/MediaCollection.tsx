@@ -228,6 +228,7 @@ type FolderMediaCollectionProps = Omit<MediaCollectionProps, "initialRootId" | "
 };
 
 const MediaViewer = lazy(() => import("./MediaViewer").then((module) => ({ default: module.MediaViewer })));
+const MediaPropertiesDialog = lazy(() => import("./MediaPropertiesDialog").then((module) => ({ default: module.MediaPropertiesDialog })));
 
 async function openFolderInExplorer(
   root: LibraryRoot | undefined,
@@ -1429,6 +1430,7 @@ export function MediaCollection({
   const [gallerySearchOpen, setGallerySearchOpen] = useState(false);
   const [searchHistory, setSearchHistory] = useState<GallerySearchHistoryEntry[]>([]);
   const [contextMenu, setContextMenu] = useState<GalleryContextMenuState>();
+  const [propertiesItem, setPropertiesItem] = useState<MediaItem>();
   const [reloadVersion, setReloadVersion] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [pageLoadRevision, setPageLoadRevision] = useState(0);
@@ -1669,10 +1671,28 @@ export function MediaCollection({
   useEffect(() => {
     if (!openRequest || handledOpenRequestId.current === openRequest.requestId) return;
     handledOpenRequestId.current = openRequest.requestId;
-    viewerReturnTarget.current = undefined;
-    setSelectedOutsideCollection(true);
+    let knownIndex: number | undefined;
+    if (catalogReadyQueryKey === queryKey) {
+      if (selected?.id === openRequest.item.id && !selectedOutsideCollection
+        && viewerReturnTarget.current?.mediaId === openRequest.item.id) {
+        knownIndex = viewerReturnTarget.current.index;
+      } else {
+        for (const [page, items] of pagesRef.current) {
+          const offset = items.findIndex((candidate) => candidate.id === openRequest.item.id);
+          if (offset < 0) continue;
+          knownIndex = page * MEDIA_PAGE_SIZE + offset;
+          break;
+        }
+      }
+    }
+    // Reopening a known file in the same folder should not detach the viewer
+    // collection and discard its already loaded rail pages and thumbnails.
+    viewerReturnTarget.current = knownIndex === undefined
+      ? undefined : { mediaId: openRequest.item.id, index: knownIndex };
+    if (knownIndex !== undefined) positionedOpenRequestId.current = openRequest.requestId;
+    setSelectedOutsideCollection(knownIndex === undefined);
     setSelected(openRequest.item);
-  }, [openRequest?.requestId, openRequest?.item]);
+  }, [openRequest?.requestId, openRequest?.item, catalogReadyQueryKey, queryKey, selected?.id, selectedOutsideCollection]);
 
   useEffect(() => {
     if (deferCatalog || !openRequest || selected?.id !== openRequest.item.id || positionedOpenRequestId.current === openRequest.requestId
@@ -3438,6 +3458,18 @@ export function MediaCollection({
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onPointerDown={(event) => event.stopPropagation()}
         >
+          {contextMenu.item && (
+            <section>
+              <div className="gallery-context-options">
+                <button type="button" role="menuitem" onClick={() => {
+                  setPropertiesItem(contextMenu.item);
+                  setContextMenu(undefined);
+                }}>
+                  <Icon name="info" />プロパティ
+                </button>
+              </div>
+            </section>
+          )}
           {contextMenu.item && (contextMenu.item.kind === "image" || contextMenu.item.kind === "gif") && (
             <section>
               <span>画像の操作</span>
@@ -3654,6 +3686,11 @@ export function MediaCollection({
           onClear={clearGallerySearch}
           onClose={() => setGallerySearchOpen(false)}
         />
+      )}
+      {propertiesItem && (
+        <Suspense fallback={<LoadingPanel label="プロパティを読み込み中…" />}>
+          <MediaPropertiesDialog item={propertiesItem} onClose={() => setPropertiesItem(undefined)} />
+        </Suspense>
       )}
       <BulkMediaEditor
         open={bulkEditorSection !== undefined}

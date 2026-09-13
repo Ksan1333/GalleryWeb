@@ -678,6 +678,7 @@ pub enum Control {
     },
 }
 struct Session {
+    media_id: String,
     cancelled: AtomicBool,
     finished: AtomicBool,
     status: Mutex<Status>,
@@ -743,6 +744,7 @@ fn create_session(
         }),
     )?);
     let session = Arc::new(Session {
+        media_id: media_id.clone(),
         cancelled: AtomicBool::new(false),
         finished: AtomicBool::new(false),
         status: Mutex::new(Status {
@@ -1055,32 +1057,160 @@ pub async fn close_vlc_player(session_id: String) -> Result<(), String> {
     let session = sessions()
         .lock()
         .map_err(|e| e.to_string())?
-        .remove(&session_id);
+        .get(&session_id)
+        .cloned();
     let Some(session) = session else {
         return Ok(());
     };
-    session.cancelled.store(true, Ordering::Relaxed);
-    let _ = session.surface.update(SurfaceLayout::default());
     // In particular, deleting a playing video must await release of its file
-    // handle. Never block the webview's UI thread while VLC drains playback.
+    // handle. Keep it addressable while draining so concurrent close/delete
+    // callers all await the same completion rather than returning too early.
     tauri::async_runtime::spawn_blocking(move || {
-        let start = Instant::now();
-        while !session.finished.load(Ordering::Acquire) {
-            if start.elapsed() > Duration::from_secs(10) {
-                return Err("動画の終了を待っています。少し待ってから再試行してください。".into());
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        drain_session(&session)?;
+        sessions()
+            .lock()
+            .map_err(|e| e.to_string())?
+            .remove(&session_id);
         Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
+fn drain_session(session: &Session) -> Result<(), String> {
+    session.cancelled.store(true, Ordering::Relaxed);
+    let _ = session.surface.update(SurfaceLayout::default());
+    let start = Instant::now();
+    while !session.finished.load(Ordering::Acquire) {
+        if start.elapsed() > Duration::from_secs(10) {
+            return Err("動画の終了を待っています。少し待ってから再試行してください。".into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Ok(())
+}
+
+/// Called on the catalog worker before a recoverable file operation. A quick
+/// navigation/retry can leave multiple players (including audio analysis) for
+/// the same item draining, so closing only the current frontend handle is not
+/// sufficient on Windows.
+pub(crate) fn release_media_for_recycle(media_id: &str) -> Result<(), String> {
+    let matching = sessions()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .iter()
+        .filter(|(_, session)| session.media_id == media_id)
+        .map(|(id, session)| (id.clone(), session.clone()))
+        .collect::<Vec<_>>();
+    for (_, session) in &matching {
+        session.cancelled.store(true, Ordering::Relaxed);
+        let _ = session.surface.update(SurfaceLayout::default());
+    }
+    for (id, session) in matching {
+        drain_session(&session)?;
+        sessions().lock().map_err(|e| e.to_string())?.remove(&id);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    #[cfg(windows)]
+    #[test]
+    fn concurrent_close_and_recycle_wait_for_all_source_handles() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("locked-video.mp4");
+        std::fs::write(&source, b"synthetic file-lock fixture").unwrap();
+        let media_id = uuid::Uuid::new_v4().to_string();
+        let mut players = Vec::new();
+        let mut workers = Vec::new();
+        let mut releases = Vec::new();
+        for _ in 0..2 {
+            let id = uuid::Uuid::new_v4().to_string();
+            let (sender, _receiver) = mpsc::channel();
+            let session = Arc::new(Session {
+                media_id: media_id.clone(),
+                cancelled: AtomicBool::new(false),
+                finished: AtomicBool::new(false),
+                status: Mutex::new(Status::default()),
+                surface: Arc::new(Surface::new(0, Arc::new(|_| {})).unwrap()),
+                sender,
+            });
+            sessions()
+                .lock()
+                .unwrap()
+                .insert(id.clone(), session.clone());
+            let handle = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(1)
+                .open(&source)
+                .unwrap();
+            let (release, released) = mpsc::channel();
+            let worker_session = session.clone();
+            workers.push(std::thread::spawn(move || {
+                released.recv().unwrap();
+                drop(handle);
+                worker_session.surface.close();
+                worker_session.finished.store(true, Ordering::Release);
+            }));
+            releases.push(release);
+            players.push((id, session));
+        }
+        let close_id = players[0].0.clone();
+        let first =
+            std::thread::spawn(move || tauri::async_runtime::block_on(close_vlc_player(close_id)));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !players[0].1.cancelled.load(Ordering::Relaxed) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            sessions().lock().unwrap().contains_key(&players[0].0),
+            "draining player remains addressable"
+        );
+        let close_id = players[0].0.clone();
+        let second =
+            std::thread::spawn(move || tauri::async_runtime::block_on(close_vlc_player(close_id)));
+        let recycle = std::thread::spawn(move || release_media_for_recycle(&media_id));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !players[1].1.cancelled.load(Ordering::Relaxed) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!first.is_finished() && !second.is_finished() && !recycle.is_finished());
+        assert!(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&source)
+                .is_err()
+        );
+        releases[0].send(()).unwrap();
+        first.join().unwrap().unwrap();
+        second.join().unwrap().unwrap();
+        assert!(
+            !recycle.is_finished(),
+            "recycle still waits for the older playback/analysis handle"
+        );
+        releases[1].send(()).unwrap();
+        recycle.join().unwrap().unwrap();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert!(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&source)
+                .is_ok()
+        );
+        for (id, _) in players {
+            assert!(!sessions().lock().unwrap().contains_key(&id));
+        }
+    }
     #[cfg(windows)]
     #[test]
     #[ignore = "requires bundled VLC and the synthetic 1080p60 fixture"]
@@ -1564,6 +1694,7 @@ mod tests {
             .unwrap();
         let (sender, receiver) = mpsc::channel();
         let session = Arc::new(Session {
+            media_id: "native-control-fixture".to_owned(),
             cancelled: AtomicBool::new(false),
             finished: AtomicBool::new(false),
             status: Mutex::new(Status::default()),

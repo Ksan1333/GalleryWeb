@@ -52,11 +52,11 @@ export class VlcVideoHandle extends EventTarget {
         // A single video session is owned by this handle. A delayed open response
         // must be closed even if React has already navigated to another item.
         this.opening = invoke<string>("open_vlc_player", { mediaId, volume: this.level, muted: this.silent, looped: this.looping }).then(async (id) => {
+            this.id = id;
             if (this.closed) {
-                await invoke("close_vlc_player", { sessionId: id });
+                await this.releaseSession(id);
                 return;
             }
-            this.id = id;
             for (const control of this.pending)
                 this.control(control);
             this.pending = [];
@@ -103,10 +103,19 @@ export class VlcVideoHandle extends EventTarget {
     }
     private fail(error: unknown) { if (this.closed || this.error)
         return; this.surface?.dispose(); this.error = error instanceof Error ? error : new Error(String(error)); clearTimeout(this.timer); this.emit("error"); if (this.id) {
-        this.closing = invoke<void>("close_vlc_player", { sessionId: this.id });
+        this.closing = this.releaseSession(this.id);
         void this.closing.catch(() => undefined);
-        this.id = undefined;
     } }
+    private releaseSession(sessionId: string): Promise<void> {
+        return invoke<void>("close_vlc_player", { sessionId }).then(() => {
+            if (this.id === sessionId) this.id = undefined;
+        }).catch(error => {
+            // A timeout is retryable: retaining a rejected close promise made
+            // every later delete fail even after native playback had drained.
+            this.closing = undefined;
+            throw error;
+        });
+    }
     private async poll() {
         if (this.closed || this.error || !this.id)
             return;
@@ -173,13 +182,11 @@ export class VlcVideoHandle extends EventTarget {
         return this.surface ? this.surface.withHidden(() => window.confirm(message)) : window.confirm(message);
     }
     dispose(): Promise<void> {
-        if (this.closed)
-            return this.closing ?? Promise.resolve();
         this.closed = true;
         clearTimeout(this.timer);
         this.surface?.dispose();
         this.pending = [];
-        this.closing ??= this.id ? invoke<void>("close_vlc_player", { sessionId: this.id }) : this.opening;
+        this.closing ??= this.id ? this.releaseSession(this.id) : this.opening;
         return this.closing;
     }
 }

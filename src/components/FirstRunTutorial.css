@@ -99,7 +99,7 @@
 .first-run-kicker {
   margin: 0;
   color: #b996e8;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 850;
   letter-spacing: .22em;
 }
@@ -115,7 +115,7 @@
   max-width: 470px;
   margin: 16px 0 0;
   color: #b9afc5;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.8;
 }
 
@@ -139,7 +139,7 @@
   padding: 9px;
   color: #c8b9d8;
   background: rgba(255, 255, 255, .025);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -177,7 +177,7 @@
   gap: 8px;
   border-radius: 12px;
   padding: 0 17px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
 }
@@ -251,14 +251,14 @@
 }
 
 .first-run-wordmark strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .first-run-wordmark small {
   border-left: 1px solid rgba(255, 255, 255, .1);
   padding-left: 9px;
   color: #746a80;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: .16em;
 }
@@ -400,7 +400,7 @@
   max-width: 570px;
   margin: 14px 0 0;
   color: #b2a6be;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.8;
 }
 
@@ -439,13 +439,13 @@
 .first-run-points article strong {
   display: block;
   color: #eee5f8;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .first-run-points article p {
   margin: 3px 0 0;
   color: #93879f;
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -459,7 +459,7 @@
   padding: 9px 11px;
   color: #f0b4bd;
   background: rgba(132, 48, 59, .12);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.55;
   text-align: left;
 }

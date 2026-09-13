@@ -32,7 +32,8 @@ try {
       if (command === 'plugin:event|unlisten') return;
       if (command === 'open_vlc_player') { if (fixture.slow) await new Promise(resolve => fixture.openReady = resolve); return 'session'; }
       if (command === 'read_vlc_status') return { ...fixture.status };
-      if (command === 'set_vlc_surface' || command === 'close_vlc_player') return;
+      if (command === 'set_vlc_surface') return;
+      if (command === 'close_vlc_player') { if (fixture.failClose) { fixture.failClose = false; throw new Error('temporary native close timeout'); } return; }
       if (command === 'capture_vlc_frame') return new Uint8Array([137,80,78,71]).buffer;
       if (command === 'control_vlc_player') {
         const c = args.control;
@@ -52,6 +53,25 @@ try {
   assert.deepEqual(geometry.rect, { x: 0, y: 0, width: 1280, height: 720 });
   assert.equal(geometry.holes.length, 1);
   assert.equal(geometry.holes[0].y, 600);
+  const clipped = await page.evaluate(() => {
+    const parent = document.querySelector('.pv-video-surface');
+    parent.style.cssText = 'width:500px;height:180px;overflow:hidden';
+    const geometry = layout(document.querySelector('canvas'));
+    parent.style.cssText = '';
+    return geometry;
+  });
+  assert.deepEqual(clipped.rect, geometry.rect, 'ancestor clipping preserves native video scale/aspect');
+  const exposed = (x, y) => !clipped.holes.some(h => x >= h.x && x < h.x + h.width && y >= h.y && y < h.y + h.height);
+  assert.equal(exposed(300, 200), true, 'visible video remains available');
+  assert.equal(exposed(300, 400), false, 'video cannot bleed below the overflow-clipped parent');
+  assert.equal(exposed(1100, 200), false, 'video cannot bleed beside the overflow-clipped parent');
+  assert.equal(await page.evaluate(() => {
+    const parent = document.querySelector('.pv-video-surface');
+    parent.style.visibility = 'hidden';
+    const visible = layout(document.querySelector('canvas')).visible;
+    parent.style.visibility = '';
+    return visible;
+  }), false, 'hidden ancestor hides native video');
   assert.equal(await page.evaluate(() => player.videoWidth), 3840, 'native resolution is not limited to full HD');
   await page.waitForTimeout(2200);
   assert.ok(await page.evaluate(() => fixture.calls.filter(c => c.command === 'set_vlc_surface').length < 6), 'geometry/heartbeat only, not per-frame IPC');
@@ -86,6 +106,13 @@ try {
   await page.evaluate(() => fixture.openReady());
   await page.waitForFunction(() => fixture.calls.some(c => c.command === 'close_vlc_player'));
   assert.equal(await page.evaluate(() => fixture.calls.filter(c => c.command === 'set_vlc_surface').length), 0, 'late open cannot show stale native surface');
+  await fresh(); await open();
+  assert.equal(await page.evaluate(async () => {
+    fixture.failClose = true;
+    try { await player.dispose(); return false; } catch { return true; }
+  }), true, 'native close timeout is reported');
+  await page.evaluate(() => player.dispose());
+  assert.equal(await page.evaluate(() => fixture.calls.filter(c => c.command === 'close_vlc_player').length), 2, 'deleting can retry a previous failed native close');
   assert.deepEqual(errors, []);
-  console.log('PASS native GPU bridge: no frame IPC, bounded geometry heartbeat, DPI, overlay clipping, modal hide/restore, input, controls, explicit capture, cleanup, late open.');
+  console.log('PASS native GPU bridge: no frame IPC, bounded geometry heartbeat, DPI, ancestor/overlay clipping, modal hide/restore, input, controls, explicit capture, cleanup, late open, retryable close.');
 } finally { await browser?.close(); await server.close(); }
