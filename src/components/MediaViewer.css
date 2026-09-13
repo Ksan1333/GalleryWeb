@@ -3158,8 +3158,8 @@
 }
 .pv-viewer-content-grid:is(.info-at-top, .info-at-bottom) { --info-space: min(32vh, 320px); }
 .pv-viewer-content-grid:is(.rail-at-top, .rail-at-bottom) { --rail-space: 174px; }
-.pv-viewer-content-grid.info-panel-collapsed { --info-space: 54px; }
-.pv-viewer-content-grid.rail-panel-collapsed { --rail-space: 54px; }
+.pv-viewer-content-grid.info-panel-collapsed { --info-space: 0px; }
+.pv-viewer-content-grid.rail-panel-collapsed { --rail-space: 0px; }
 .pv-viewer-content-grid.info-at-left { --info-left: var(--info-space); }
 .pv-viewer-content-grid.rail-at-left { --rail-left: var(--rail-space); }
 .pv-viewer-content-grid.info-at-right { --info-right: var(--info-space); }
@@ -3231,10 +3231,6 @@
   overflow: hidden;
   border-radius: 50%;
 }
-.pv-media-info-panel.is-collapsed.placement-right { top: 6px; right: 6px; bottom: 6px; }
-.pv-media-info-panel.is-collapsed.placement-left { top: 6px; bottom: 6px; left: 6px; }
-.pv-media-info-panel.is-collapsed.placement-top { top: 6px; right: 6px; left: 6px; }
-.pv-media-info-panel.is-collapsed.placement-bottom { right: 6px; bottom: 6px; left: 6px; }
 .pv-media-info-panel.is-collapsed > header {
   width: 48px;
   min-height: 48px;
@@ -3252,42 +3248,8 @@
   border-radius: 50%;
 }
 .pv-media-info-panel.is-collapsed:not(.placement-floating) {
-  border-radius: 13px;
-}
-.pv-media-info-panel.is-collapsed:is(.placement-top, .placement-bottom) {
-  width: auto;
-  height: 48px;
-}
-.pv-media-info-panel.is-collapsed:is(.placement-left, .placement-right) {
-  width: 48px;
-  height: auto;
-}
-.pv-media-info-panel.is-collapsed:not(.placement-floating) > header {
-  width: 100%;
-  height: 100%;
-  flex-wrap: nowrap;
-  gap: 2px;
-}
-.pv-media-info-panel.is-collapsed:is(.placement-left, .placement-right) > header {
-  flex-direction: column-reverse;
-}
-.pv-media-info-panel.is-collapsed:not(.placement-floating) > header > .pv-media-info-drag-handle {
-  display: grid;
-  flex: 0 0 30px;
-}
-.pv-media-info-panel.is-collapsed:not(.placement-floating) .pv-media-info-sheet-toggle {
-  display: flex;
-  width: auto;
-  height: auto;
-  min-height: 34px;
-  flex: 1;
-  gap: 8px;
-  border-radius: 8px;
-  font-size: 13px;
-}
-.pv-media-info-panel.is-collapsed:is(.placement-left, .placement-right) .pv-media-info-sheet-toggle {
-  writing-mode: vertical-rl;
-  width: 34px;
+  /* Keep the component/cache mounted; the footer is its closed-state entry. */
+  display: none;
 }
 
 .pv-viewer-rail {
@@ -3379,10 +3341,6 @@
   overflow: hidden;
   border-radius: 50%;
 }
-.pv-viewer-rail.is-collapsed.placement-right { top: 6px; right: 6px; bottom: 6px; }
-.pv-viewer-rail.is-collapsed.placement-left { top: 6px; bottom: 6px; left: 6px; }
-.pv-viewer-rail.is-collapsed.placement-top { top: 6px; right: 6px; left: 6px; }
-.pv-viewer-rail.is-collapsed.placement-bottom { right: 6px; bottom: 6px; left: 6px; }
 .pv-viewer-rail.is-collapsed .pv-viewer-rail-toolbar {
   width: 48px;
   height: 48px;
@@ -3402,45 +3360,7 @@
 .pv-viewer-rail.is-collapsed :is(.pv-viewer-panel-placement, .pv-viewer-rail-drag-handle, .pv-viewer-rail-scroll, .pv-viewer-rail-count) { display: none; }
 
 .pv-viewer-rail.is-collapsed:not(.placement-floating) {
-  border-radius: 13px;
-}
-.pv-viewer-rail.is-collapsed:is(.placement-top, .placement-bottom) {
-  width: auto;
-  height: 48px;
-}
-.pv-viewer-rail.is-collapsed:is(.placement-left, .placement-right) {
-  width: 48px;
-  height: auto;
-}
-.pv-viewer-rail.is-collapsed:not(.placement-floating) .pv-viewer-rail-toolbar {
-  width: 100%;
-  height: 100%;
-  flex-wrap: nowrap;
-  gap: 2px;
-}
-.pv-viewer-rail.is-collapsed:is(.placement-left, .placement-right) .pv-viewer-rail-toolbar {
-  flex-direction: column;
-}
-.pv-viewer-rail.is-collapsed:not(.placement-floating) .pv-viewer-rail-toggle {
-  width: auto;
-  flex: 1;
-  border-radius: 9px;
-  padding: 0 7px;
-}
-.pv-viewer-rail.is-collapsed:is(.placement-top, .placement-bottom) .pv-viewer-rail-toggle span {
-  display: inline;
-}
-.pv-viewer-rail.is-collapsed:is(.placement-left, .placement-right) .pv-viewer-rail-toggle {
-  writing-mode: vertical-rl;
-  width: 34px;
-  height: auto;
-}
-.pv-viewer-rail.is-collapsed:not(.placement-floating) .pv-viewer-rail-toggle span { display: inline; }
-.pv-viewer-rail.is-collapsed:not(.placement-floating) .pv-viewer-rail-drag-handle {
-  display: grid;
-  width: 32px;
-  flex: 0 0 32px;
-  margin: 0;
+  display: none;
 }
 
 .pv-viewer-panel-drop-preview {
@@ -3485,8 +3405,8 @@
 }
 .pv-media-info-panel.is-properties .pv-media-info-scroll { overflow: visible; }
 
-/* Reserve the actual docked edges, including collapsed bars. Panels sharing an
-   edge sit beside each other, while horizontal bars remain below the filenames. */
+/* Reserve only expanded panels. Closed docked panels live in the footer,
+   while minimized floating panels keep their draggable circular control. */
 .pv-viewer-content-grid > .pv-media-info-panel:is(.placement-left, .placement-right) {
   top: calc(6px + var(--rail-top));
   bottom: calc(6px + var(--rail-bottom));
@@ -3509,6 +3429,52 @@
 .pv-viewer-footer { column-gap: 12px; }
 .pv-viewer-actions { max-width: min(100%, 1100px); }
 .pv-viewer-tag-summary { overflow: hidden; }
+
+/* Stable, compact entry points: no empty right/bottom gutters around media. */
+.pv-viewer-panel-launcher {
+  display: flex;
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--field-bg);
+}
+.pv-viewer-panel-launcher > button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--text);
+  background: transparent;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pv-viewer-panel-launcher > button svg { width: 17px; height: 17px; }
+.pv-viewer-panel-launcher > button:is(:hover, [aria-expanded="true"]):not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--field-bg));
+}
+.pv-viewer-panel-launcher > button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 1px;
+}
+.pv-viewer-panel-launcher > button:disabled { opacity: .5; cursor: default; }
+
+@media (max-width: 1280px) {
+  .pv-viewer-footer { grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
+  .pv-viewer-tag-summary { display: none; }
+  .pv-viewer-actions { width: 100%; justify-content: flex-start; }
+  .pv-viewer-actions > :first-child { margin-left: auto; }
+  .pv-viewer-actions > :last-child { margin-right: auto; }
+}
 
 @media (max-width: 1080px) {
   .pv-viewer-header:has(.pv-viewer-title-zoom) {

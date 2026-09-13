@@ -107,7 +107,8 @@ function installFixture() {
       if(command.startsWith('plugin:event|'))return 1;
       if(command==='plugin:window|is_fullscreen')return false;
       if(command==='plugin:window|set_theme'||command==='set_preference')return null;
-      if(command==='get_preferences')return {galleryDisplayPreferences:{sortOrder:'name-asc',groupMode:'none',gridSize:'medium'}};
+      if(command==='get_preferences')return {galleryDisplayPreferences:{sortOrder:'name-asc',groupMode:'none',gridSize:'medium'},
+        ...(new URLSearchParams(location.search).has('saved-panels')?{viewerInfoLayout:'left',viewerRailPlacement:'top'}:{})};
       if(command==='list_library_roots')return [{id:'fixture-root',path:'E:/Fixture',displayName:'Video fixture',mediaCount:3,isPriority:true}];
       if(command==='list_media_folders')return [];
       if(command==='get_media_page_info')return {totalCount:3,dateGroups:[]};
@@ -138,7 +139,9 @@ function contrastSamples() {
   const lum = c=>c.slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
   return ['.pv-media-info-summary strong','.pv-media-info-summary small','.pv-media-info-list dt','.pv-media-info-list dd',
     '.pv-media-info-path','.pv-media-info-relative','.pv-media-info-section-title > span','.pv-media-info-explorer',
-    '.pv-media-recommendation-note','.pv-media-info-tags > button','.pv-viewer-title h2','.pv-viewer-title p'].map(selector=>{
+    '.pv-media-recommendation-note','.pv-media-info-tags > button','.pv-viewer-title h2','.pv-viewer-title p',
+    '.pv-viewer-panel-launcher > button[aria-label="一覧パネル"]',
+    '.pv-viewer-panel-launcher > button[aria-label="レコメンドパネル"]'].map(selector=>{
     const el=document.querySelector(selector);if(!el)return {selector,missing:true};
     const style=getComputedStyle(el),ratios=bg(el).map(background=>{
       const a=lum(over(rgb(style.color),background)),b=lum(background);
@@ -146,6 +149,22 @@ function contrastSamples() {
     });
     return {selector,ratio:Math.min(...ratios),font:parseFloat(style.fontSize)};
   });
+}
+
+async function assertFooterLayout(page, viewport, kind) {
+  const measurements=await page.evaluate(()=>{
+    const rect=selector=>{
+      const box=document.querySelector(selector).getBoundingClientRect();
+      return {x:box.x,y:box.y,right:box.right,bottom:box.bottom,width:box.width,height:box.height};
+    };
+    return {nav:rect('.pv-viewer-panel-launcher'),actions:rect('.pv-viewer-actions'),footer:rect('.pv-viewer-footer')};
+  });
+  const {nav,actions,footer}=measurements;
+  assert.ok(nav.right<=actions.x+1,`${kind} ${viewport.width}: panel navigation never overlaps centered/scrollable actions: ${JSON.stringify(measurements)}`);
+  assert.ok(nav.x>=footer.x&&actions.right<=footer.right+1&&actions.bottom<=footer.bottom+1,
+    `${kind} ${viewport.width}: both footer regions fit inside their footer`);
+  assert.ok(footer.x>=0&&footer.right<=viewport.width&&footer.bottom<=viewport.height,
+    `${kind} ${viewport.width}: footer stays fully inside the viewport`);
 }
 
 let browser;
@@ -164,12 +183,66 @@ try {
     'recommendations start hidden');
   assert.equal(await page.locator('.pv-viewer-rail.is-collapsed').count(), 1,
     'the viewer list starts hidden');
-  const initialInfoBox=await page.locator('.pv-media-info-panel.is-collapsed').boundingBox();
-  const initialRailBox=await page.locator('.pv-viewer-rail.is-collapsed').boundingBox();
-  assert.ok(initialInfoBox&&initialInfoBox.height>initialInfoBox.width*2,
-    'a right-docked minimized recommendation panel keeps the edge-tab shape');
-  assert.ok(initialRailBox&&initialRailBox.width>initialRailBox.height*2,
-    'a bottom-docked minimized list keeps the edge-tab shape');
+  assert.equal(await page.locator('.pv-media-info-panel.is-collapsed').boundingBox(),null,
+    'closed docked recommendations do not create an empty edge bar');
+  assert.equal(await page.locator('.pv-viewer-rail.is-collapsed').boundingBox(),null,
+    'the closed docked list does not create an empty bottom bar');
+  await page.evaluate(()=>{
+    window.__initialInfo=document.querySelector('.pv-media-info-panel');
+    window.__initialRail=document.querySelector('.pv-viewer-rail');
+  });
+  const panelNav=page.getByRole('navigation',{name:'ビュワーパネル',exact:true});
+  const railToggle=panelNav.getByRole('button',{name:'一覧パネル',exact:true});
+  const infoToggle=panelNav.getByRole('button',{name:'レコメンドパネル',exact:true});
+  if(!diagnose) {
+    for(const preset of await page.evaluate(()=>window.__presets)) {
+      await page.evaluate(p=>window.__theme('light',p),preset);
+      for(const sample of (await page.evaluate(contrastSamples)).filter(sample=>sample.selector.startsWith('.pv-viewer-panel-launcher'))) {
+        assert.ok(!sample.missing&&sample.ratio>=4.5,`${preset}: closed launcher ${JSON.stringify(sample)}`);
+      }
+    }
+    await page.evaluate(()=>window.__theme('light'));
+  }
+  for(const viewport of [{width:760,height:600},{width:1024,height:768},{width:1440,height:900}]) {
+    await page.setViewportSize(viewport);
+    await page.waitForFunction(()=>{
+      const grid=document.querySelector('.pv-viewer-content-grid').getBoundingClientRect();
+      const main=document.querySelector('.pv-viewer-main').getBoundingClientRect();
+      return ['x','y','width','height'].every(key=>Math.abs(grid[key]-main[key])<2);
+    });
+    await assertFooterLayout(page,viewport,'video');
+    for(const toggle of [railToggle,infoToggle]) {
+      const box=await toggle.boundingBox();
+      assert.ok(box&&box.x>=0&&box.y>=0&&box.x+box.width<=viewport.width&&box.y+box.height<=viewport.height,
+        `${viewport.width}: panel toggle stays fully visible without scrolling`);
+      assert.ok(box.width>=36&&box.height>=36,`${viewport.width}: panel toggles retain usable pointer/touch targets`);
+      assert.equal(await toggle.getAttribute('aria-expanded'),'false');
+      assert.equal(await toggle.evaluate(button=>Boolean(document.getElementById(button.getAttribute('aria-controls')))),true,
+        'each footer toggle identifies its retained panel');
+    }
+    await railToggle.click();
+    await infoToggle.click();
+    await page.waitForFunction(()=>{
+      const selectors=['.pv-viewer-main','.pv-media-info-panel','.pv-viewer-rail','.pv-viewer-footer'];
+      const boxes=selectors.map(selector=>document.querySelector(selector).getBoundingClientRect());
+      const overlap=(a,b)=>Math.min(a.right,b.right)-Math.max(a.left,b.left)>2&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>2;
+      return boxes.every(box=>box.width>0&&box.height>0)
+        &&boxes.every((box,index)=>boxes.slice(index+1).every(other=>!overlap(box,other)));
+    });
+    assert.equal(await railToggle.getAttribute('aria-expanded'),'true');
+    assert.equal(await infoToggle.getAttribute('aria-expanded'),'true');
+    await railToggle.click();
+    await infoToggle.click();
+    assert.equal(await page.evaluate(()=>window.__initialInfo===document.querySelector('.pv-media-info-panel')
+      &&window.__initialRail===document.querySelector('.pv-viewer-rail')),true,
+      'footer open/close keeps both panel instances mounted');
+  }
+  await railToggle.focus();
+  await page.keyboard.press('Enter');
+  await infoToggle.tap();
+  assert.equal(await railToggle.getAttribute('aria-expanded'),'true','the list can be opened from the keyboard');
+  assert.equal(await infoToggle.getAttribute('aria-expanded'),'true','recommendations can be opened by touch');
+  console.log('Compact viewer panel navigation passed at 760, 1024 and 1440 px; hidden panels consume no media space.');
   const dragPanel = async (panel, handleName, target) => {
     const handleLocator=page.getByRole('button',{name:handleName,exact:true});
     await handleLocator.hover();
@@ -199,8 +272,6 @@ try {
   await dragPanel('.pv-media-info-panel','情報とレコメンドをドラッグして移動','right');
   await dragPanel('.pv-viewer-rail','メディア一覧をドラッグして移動','top');
   await dragPanel('.pv-viewer-rail','メディア一覧をドラッグして移動','bottom');
-  await page.getByRole('button',{name:'情報とレコメンドを開く'}).click();
-  await page.getByRole('button',{name:'メディア一覧を開く'}).click();
   await page.locator('.pv-media-info-list dd').first().waitFor();
   await page.waitForFunction(() => !document.querySelector('.pv-viewer-page-loading'));
   assert.equal(await page.locator('.pv-viewer-page-loading').count(), 0,
@@ -232,7 +303,7 @@ try {
       await page.evaluate(p=>window.__theme('light',p),preset);
       const themed=await page.evaluate(contrastSamples);
       // Media chrome is intentionally dark for dark presets; verify the themed information panel here.
-      for(const s of themed.filter(s=>s.selector.startsWith('.pv-media-'))) assert.ok(!s.missing&&s.ratio>=4.5,`${preset}: ${JSON.stringify(s)}`);
+      for(const s of themed.filter(s=>s.selector.startsWith('.pv-media-')||s.selector.startsWith('.pv-viewer-panel-launcher'))) assert.ok(!s.missing&&s.ratio>=4.5,`${preset}: ${JSON.stringify(s)}`);
     }
     await page.evaluate(()=>window.__theme('light'));
     await page.evaluate(()=>document.querySelector('.pv-media-info-panel').classList.add('is-collapsed','is-dragging','drag-target-bottom'));
@@ -259,8 +330,10 @@ try {
   await reset();
   await page.getByRole('button',{name:'すべての枠を非表示（Escで戻す）'}).click();
   assert.equal(await page.locator('.pv-viewer-header').count(),0,'hide-all removes viewer chrome');
+  assert.equal(await panelNav.count(),0,'hide-all also removes the footer panel launchers');
   await page.getByRole('button',{name:'すべての枠を表示（Esc）'}).click();
   assert.equal(await page.locator('.pv-viewer-header').count(),1,'viewer chrome can be restored without closing media');
+  assert.equal(await panelNav.count(),1,'restoring chrome restores discoverable panel launchers');
   await page.evaluate(async()=>{
     const rect=document.querySelector('.pv-video-surface').getBoundingClientRect();
     const send=window.__fixture.listeners['pixvault://vlc-input/viewer-job'];
@@ -326,7 +399,7 @@ try {
   }
   if(!diagnose) {
     await page.goto(base+'?direct');
-    await page.getByRole('button',{name:'メディア一覧を開く'}).click();
+    await page.getByRole('button',{name:'一覧パネル',exact:true}).click();
     await page.locator('.pv-viewer-rail-name').first().waitFor();
     await page.evaluate(()=>{
       window.__retainedRail=document.querySelector('.pv-viewer-rail');
@@ -353,6 +426,38 @@ try {
     await page.getByRole('button',{name:'次の本',exact:true}).waitFor();
     assert.deepEqual(await page.locator('.pv-book-controls button').allTextContents(),['次の本','次のページ','前のページ','前の本'],
       'book navigation places next page/book on the left and previous page/book on the right');
+    for(const viewport of [{width:760,height:600},{width:1024,height:768},{width:1440,height:900}]) {
+      await page.setViewportSize(viewport);
+      await assertFooterLayout(page,viewport,'book');
+    }
+    await page.goto(base+'?direct&saved-panels');
+    await page.locator('.pv-media-info-panel.placement-left').waitFor({state:'attached'});
+    await page.locator('.pv-viewer-rail.placement-top').waitFor({state:'attached'});
+    await page.getByRole('button',{name:'一覧パネル',exact:true}).click();
+    await page.getByRole('button',{name:'レコメンドパネル',exact:true}).click();
+    assert.equal(await page.locator('.pv-media-info-panel.placement-left:not(.is-collapsed)').count(),1,
+      'opening recommendations preserves the saved placement');
+    assert.equal(await page.locator('.pv-viewer-rail.placement-top:not(.is-collapsed)').count(),1,
+      'opening the list preserves the saved placement');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.getByRole('button',{name:'レコメンドパネル',exact:true}).getAttribute('aria-expanded'),'false',
+      'Escape closes recommendations and leaves their footer toggle available');
+    assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'レコメンドパネル',
+      'closing recommendations returns focus to their visible launcher');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.getByRole('button',{name:'一覧パネル',exact:true}).getAttribute('aria-expanded'),'false',
+      'Escape closes the list without closing the viewer');
+    assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'一覧パネル',
+      'closing the list returns focus to its visible launcher');
+    await page.getByRole('button',{name:'レコメンドパネル',exact:true}).click();
+    await page.locator('.pv-media-info-panel').getByRole('button',{name:'フローティング',exact:true}).click();
+    await page.getByRole('button',{name:'レコメンドパネル',exact:true}).click();
+    await page.waitForFunction(()=>{
+      const box=document.querySelector('.pv-media-info-panel.placement-floating.is-collapsed')?.getBoundingClientRect();
+      return box&&Math.abs(box.width-48)<1&&Math.abs(box.height-48)<1;
+    });
+    assert.equal(await page.locator('.pv-media-info-panel.placement-floating.is-collapsed').isVisible(),true,
+      'a manually floating minimized panel retains its movable round icon');
     console.log('Dock destinations, direct-open rail preservation and RTL book controls passed.');
   }
   if(diagnose) {

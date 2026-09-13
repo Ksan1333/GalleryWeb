@@ -935,6 +935,7 @@ export function MediaInfoSidebar({
     <>
     <aside
       ref={panelRef}
+      id={propertiesOnly ? undefined : "pv-viewer-info-panel"}
       style={floatingStyle}
       className={[
         "pv-media-info-panel",
@@ -1480,6 +1481,7 @@ function MediaThumbnailRail({
     <>
     <nav
       ref={railRef}
+      id="pv-viewer-thumbnail-rail"
       style={floatingStyle}
       className={`pv-viewer-rail placement-${placement}${open ? "" : " is-collapsed"}${dragging ? ` is-dragging drag-target-${dragTarget}` : ""}`}
       aria-label={includesAllMedia ? "ギャラリー内の全メディア一覧" : "同じ種類のメディア一覧"}
@@ -3562,6 +3564,16 @@ export function MediaViewer({
   const [railLayout, setRailLayout] = useState<ViewerPanelPlacement>("bottom");
   const [recommendSheetOpen, setRecommendSheetOpen] = useState(false);
   const [viewerRailOpen, setViewerRailOpen] = useState(false);
+  const infoLauncherRef = useRef<HTMLButtonElement>(null);
+  const railLauncherRef = useRef<HTMLButtonElement>(null);
+  const closeInfoPanel = useCallback(() => {
+    setRecommendSheetOpen(false);
+    infoLauncherRef.current?.focus({ preventScroll: true });
+  }, []);
+  const closeRailPanel = useCallback(() => {
+    setViewerRailOpen(false);
+    railLauncherRef.current?.focus({ preventScroll: true });
+  }, []);
   const [imageContextMenu, setImageContextMenu] = useState<{ x: number; y: number }>();
   const [videoPlaybackPreferences, setVideoPlaybackPreferences] = useState<VideoPlaybackPreferences>(
     DEFAULT_VIDEO_PLAYBACK_PREFERENCES,
@@ -3950,14 +3962,16 @@ export function MediaViewer({
       else if (showTagEditor) setShowTagEditor(false);
       else if (showBookmarkList) setShowBookmarkList(false);
       else if (showBookSettings) setShowBookSettings(false);
-      else if (recommendSheetOpen) setRecommendSheetOpen(false);
-      else if (viewerRailOpen) setViewerRailOpen(false);
+      else if (recommendSheetOpen) closeInfoPanel();
+      else if (viewerRailOpen) closeRailPanel();
       else onClose();
     };
     window.addEventListener("pixvault:navigate-back", handleNavigateBack);
     return () => window.removeEventListener("pixvault:navigate-back", handleNavigateBack);
   }, [
     closeGifFrames,
+    closeInfoPanel,
+    closeRailPanel,
     infoLayout,
     onClose,
     recommendSheetOpen,
@@ -4053,8 +4067,8 @@ export function MediaViewer({
         else if (showTagEditor) setShowTagEditor(false);
         else if (showBookmarkList) setShowBookmarkList(false);
         else if (showBookSettings) setShowBookSettings(false);
-        else if (recommendSheetOpen) setRecommendSheetOpen(false);
-        else if (viewerRailOpen) setViewerRailOpen(false);
+        else if (recommendSheetOpen) closeInfoPanel();
+        else if (viewerRailOpen) closeRailPanel();
         else onClose();
         return;
       }
@@ -4087,7 +4101,7 @@ export function MediaViewer({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [bookBinding, bookViewMode, changeFullscreen, chromeHidden, isFullscreen, closeGifFrames, imageContextMenu, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds, viewerRailOpen]);
+  }, [bookBinding, bookViewMode, changeFullscreen, chromeHidden, isFullscreen, closeGifFrames, closeInfoPanel, closeRailPanel, imageContextMenu, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds, viewerRailOpen]);
 
   useEffect(() => {
     if (!message) return;
@@ -4879,7 +4893,7 @@ export function MediaViewer({
               layout={infoLayout}
               open={recommendSheetOpen}
               busy={busyAction === "reveal"}
-              onToggleOpen={() => setRecommendSheetOpen((current) => !current)}
+              onToggleOpen={() => recommendSheetOpen ? closeInfoPanel() : setRecommendSheetOpen(true)}
               onLayoutChange={moveInfoLayout}
               onSelect={selectRecommendation}
               onEditTags={() => setShowTagEditor(true)}
@@ -4894,7 +4908,7 @@ export function MediaViewer({
               open={viewerRailOpen}
               placement={railLayout}
               onSelect={selectViewerRailItem}
-              onToggle={() => setViewerRailOpen((current) => !current)}
+              onToggle={() => viewerRailOpen ? closeRailPanel() : setViewerRailOpen(true)}
               onPlacementChange={moveRailLayout}
               onVisibleRangeChange={viewerRailIncludesAllMedia ? ensureCollectionRange : undefined}
               includesAllMedia={viewerRailIncludesAllMedia}
@@ -4935,6 +4949,32 @@ export function MediaViewer({
         )}
 
         {!menusHidden && <footer className="pv-viewer-footer">
+          <nav className="pv-viewer-panel-launcher" aria-label="ビュワーパネル">
+            <button
+              ref={railLauncherRef}
+              type="button"
+              aria-label="一覧パネル"
+              aria-expanded={viewerRailOpen}
+              aria-controls={surroundingsReady && viewerRailItemCount > 0 ? "pv-viewer-thumbnail-rail" : undefined}
+              title={viewerRailOpen ? "メディア一覧を閉じる" : "メディア一覧を開く"}
+              disabled={!surroundingsReady || viewerRailItemCount === 0}
+              onClick={() => viewerRailOpen ? closeRailPanel() : setViewerRailOpen(true)}
+            >
+              <Icon name="gallery" /><span>一覧</span>
+            </button>
+            <button
+              ref={infoLauncherRef}
+              type="button"
+              aria-label="レコメンドパネル"
+              aria-expanded={recommendSheetOpen}
+              aria-controls={surroundingsReady ? "pv-viewer-info-panel" : undefined}
+              title={recommendSheetOpen ? "情報とレコメンドを閉じる" : "情報とレコメンドを開く"}
+              disabled={!surroundingsReady}
+              onClick={() => recommendSheetOpen ? closeInfoPanel() : setRecommendSheetOpen(true)}
+            >
+              <Icon name="sparkles" /><span>レコメンド</span>
+            </button>
+          </nav>
           <div className="pv-viewer-actions">
             {orderedViewerActions.map(renderViewerAction)}
           </div>

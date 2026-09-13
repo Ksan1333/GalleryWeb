@@ -147,22 +147,33 @@ const openEffect = find((node) => ts.isCallExpression(node) && node.expression.g
   && node.arguments[0].getText().includes("getMediaItemIndex(request.item.id"));
 const immediateOpenEffect = find((node) => ts.isCallExpression(node) && node.expression.getText() === "useEffect"
   && node.arguments[0].getText().includes("setSelected(openRequest.item)"));
+const mediaPageSize = execute(`module.exports = ${find((node) => ts.isVariableDeclaration(node)
+  && node.name.getText() === "MEDIA_PAGE_SIZE").initializer.getText()};`);
 function runOpenEffect(state, getMediaItemIndex) {
   const context = {
     openRequest: state.request, handledOpenRequestId: state.handled,
     positionedOpenRequestId: state.positioned, deferCatalog: Boolean(state.deferred),
-    displayPreferencesLoaded: true, catalogReadyQueryKey: "query", catalogFailedQueryKey: state.countFailed ? "query" : "", queryKey: "query",
+    displayPreferencesLoaded: true, catalogReadyQueryKey: state.readyQuery ?? (state.countFailed ? "" : "query"),
+    catalogFailedQueryKey: state.countFailed ? "query" : "", queryKey: "query",
     baseQuery: state.query, viewerReturnTarget: state.target,
-    getMediaItemIndex, setSelectedOutsideCollection: (value) => { state.outside = value; },
+    selected: state.selected, selectedOutsideCollection: state.outside,
+    pagesRef: state.pages, MEDIA_PAGE_SIZE: mediaPageSize,
+    getMediaItemIndex, setSelectedOutsideCollection: (value) => { state.outside = value; state.outsideChanges.push(value); },
     setSelected: (value) => { state.selected = value; state.opens += 1; },
     setError: (value) => { state.error = value; },
   };
   execute(`module.exports = (${immediateOpenEffect.arguments[0].getText()})();`, context);
-  return execute(`module.exports = (${openEffect.arguments[0].getText()})();`, { ...context, selected: state.selected });
+  // Model the render after the immediate-open state updates. Mutable refs are
+  // shared by both real effects; selected/outside are React render snapshots.
+  return execute(`module.exports = (${openEffect.arguments[0].getText()})();`, {
+    ...context, selected: state.selected, selectedOutsideCollection: state.outside,
+  });
 }
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 function requestState() {
-  return { request: { requestId: "request-1", item: { id: "file-1" } }, query: { folderPath: "folder" },
+  const request = { requestId: "request-1", item: { id: "file-1" } };
+  return { request, query: { folderPath: "folder" }, selected: request.item,
+    outside: true, outsideChanges: [], pages: { current: new Map() },
     handled: { current: undefined }, positioned: { current: undefined }, target: { current: undefined }, opens: 0 };
 }
 test("external-open resolves one SQL rank, restores target and consumes each request only once", async () => {
@@ -214,4 +225,103 @@ test("external file opens before any deferred folder aggregation or rank lookup"
   assert.equal(state.selected.id, "file-1");
   assert.equal(state.outside, true);
   assert.equal(state.positioned.current, undefined);
+});
+
+test("known external files reuse loaded page ranks without detaching the collection or querying SQL", () => {
+  for (const [page, offset] of [[0, 0], [14, 1]]) {
+    const state = requestState();
+    state.selected = { id: "previous-file" };
+    state.outside = false;
+    const items = [{ id: "preceding-file" }, { id: "following-file" }];
+    items[offset] = state.request.item;
+    state.pages.current.set(page, items);
+    const api = () => { throw new Error("A loaded page already supplies the exact rank"); };
+    runOpenEffect(state, api);
+    assert.equal(state.target.current.mediaId, state.request.item.id);
+    assert.equal(state.target.current.index, page * mediaPageSize + offset);
+    assert.equal(state.positioned.current, state.request.requestId);
+    assert.deepEqual(state.outsideChanges, [false], "known files never temporarily detach the viewer collection");
+    assert.equal(state.selected, state.request.item);
+    assert.equal(state.pages.current.get(page), items, "the existing page cache is retained");
+    runOpenEffect(state, api);
+    assert.equal(state.opens, 1, "a consumed request cannot reopen or reposition the file");
+    assert.deepEqual(state.outsideChanges, [false]);
+  }
+});
+
+test("reopening the current file retains its known rank even outside the loaded gallery pages", () => {
+  const state = requestState();
+  state.outside = false;
+  state.target.current = { mediaId: state.request.item.id, index: 219999 };
+  state.pages.current.set(0, [{ id: "unrelated-loaded-file" }]);
+  runOpenEffect(state, () => { throw new Error("The current viewer rank must not be resolved again"); });
+  assert.equal(state.target.current.mediaId, state.request.item.id);
+  assert.equal(state.target.current.index, 219999);
+  assert.equal(state.positioned.current, state.request.requestId);
+  assert.deepEqual(state.outsideChanges, [false]);
+  assert.equal(state.selected, state.request.item);
+});
+
+test("external-open never reuses cached ranks from a different folder/filter query", async () => {
+  const state = requestState();
+  state.readyQuery = "previous-query";
+  state.outside = false;
+  state.target.current = { mediaId: state.request.item.id, index: 900 };
+  state.pages.current.set(0, [state.request.item]);
+  let queries = 0;
+  const api = async (id, query) => {
+    queries += 1;
+    assert.equal(id, state.request.item.id);
+    assert.equal(query, state.query);
+    return { data: 219999 };
+  };
+  runOpenEffect(state, api);
+  assert.equal(state.selected, state.request.item, "unknown-folder media is visible immediately");
+  assert.equal(state.target.current, undefined, "an old current rank is not assigned to the new scope");
+  assert.equal(state.positioned.current, undefined);
+  assert.equal(state.outside, true);
+  assert.equal(queries, 0, "rank lookup waits for the matching catalog scope");
+  state.readyQuery = "query";
+  runOpenEffect(state, api);
+  await tick();
+  assert.equal(queries, 1);
+  assert.equal(state.target.current.index, 219999, "the actual new-scope rank replaces the old page-zero match");
+  assert.equal(state.outside, false);
+});
+
+test("opening an unknown file after a known one isolates it until its own SQL rank resolves", async () => {
+  const state = requestState();
+  state.pages.current.set(2, [state.request.item]);
+  runOpenEffect(state, () => { throw new Error("The first file is cached"); });
+  assert.equal(state.target.current.index, 2 * mediaPageSize);
+  state.request = { requestId: "request-2", item: { id: "file-2" } };
+  let finish;
+  runOpenEffect(state, (id, query) => {
+    assert.equal(id, "file-2");
+    assert.equal(query, state.query);
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  assert.equal(state.selected, state.request.item);
+  assert.equal(state.target.current, undefined, "the preceding file's rank is never reused");
+  assert.equal(state.outside, true);
+  assert.deepEqual(state.outsideChanges, [false, true]);
+  finish({ data: 219998 });
+  await tick();
+  assert.equal(state.target.current.mediaId, "file-2");
+  assert.equal(state.target.current.index, 219998);
+  assert.equal(state.outside, false);
+  assert.equal(state.opens, 2);
+  assert.equal(state.pages.current.get(2)[0].id, "file-1", "unknown-file resolution preserves already loaded pages");
+});
+
+test("a failed external-file rank lookup keeps the file open without a fabricated position", async () => {
+  const state = requestState();
+  state.target.current = { mediaId: "previous-file", index: 12 };
+  runOpenEffect(state, async () => ({ data: 0, error: "simulated rank failure" }));
+  await tick();
+  assert.equal(state.selected, state.request.item);
+  assert.equal(state.target.current, undefined);
+  assert.equal(state.outside, true);
+  assert.equal(state.positioned.current, state.request.requestId);
+  assert.match(state.error, /simulated rank failure/);
 });
