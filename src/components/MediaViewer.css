@@ -1175,6 +1175,13 @@
   object-fit: contain;
 }
 
+.pv-video-surface > .pv-vlc-canvas {
+  /* Native video uses the parent surface rectangle. Remove the canvas's
+     intrinsic 300x150 ratio from grid sizing while that HWND is attaching. */
+  position: absolute;
+  inset: 0;
+}
+
 .pv-video-surface:focus-visible {
   outline: 2px solid #d9c5ed;
   outline-offset: -3px;

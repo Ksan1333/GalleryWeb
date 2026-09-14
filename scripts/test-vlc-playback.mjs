@@ -15,7 +15,7 @@ assert.match(native, /pub async fn open_vlc_player[\s\S]*?spawn_blocking/, 'cros
 assert.ok(!native.includes('pub async fn read_vlc_frame'));
 const surface = readFileSync(resolve(root, 'src-tauri/src/vlc_surface.rs'), 'utf8');
 assert.ok(!surface.includes('ShowCursor(') && !surface.includes('SetSystemCursor('));
-const server = await createServer({ root, configFile: false, logLevel: 'error', server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/src-tauri/**', '**/release/**', '**/artifacts/**'] } }, plugins: [{ name: 'fixture', configureServer(vite) { vite.middlewares.use('/__vlc', (_, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><style>body{margin:0}canvas{width:640px;height:360px}.pv-video-controls{position:absolute;left:0;top:300px;width:640px;height:60px;background:black}</style><section role="dialog" aria-modal="true"><div class="pv-video-surface" tabindex="0"><canvas></canvas></div><div class="pv-video-controls"></div></section><script type="module">import {VlcVideoHandle} from "/src/services/vlcPlayer.ts";import {surfaceLayout} from "/src/services/nativeVideoSurface.ts";window.Handle=VlcVideoHandle;window.layout=surfaceLayout;</script>'); }); } }] });
+const server = await createServer({ root, configFile: false, logLevel: 'error', server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/src-tauri/**', '**/release/**', '**/artifacts/**'] } }, plugins: [{ name: 'fixture', configureServer(vite) { vite.middlewares.use('/__vlc', (_, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><style>body{margin:0}.clip-parent{width:640px;height:360px}.pv-video-surface{position:relative;width:640px;height:360px}.pv-video-surface canvas{position:absolute;left:80px;top:90px;width:320px;height:180px}.pv-video-controls{position:absolute;left:0;top:300px;width:640px;height:60px;background:black}</style><section role="dialog" aria-modal="true"><div class="clip-parent"><div class="pv-video-surface" tabindex="0"><canvas></canvas></div></div><div class="pv-video-controls"></div></section><script type="module">import {VlcVideoHandle} from "/src/services/vlcPlayer.ts";import {surfaceLayout} from "/src/services/nativeVideoSurface.ts";window.Handle=VlcVideoHandle;window.layout=surfaceLayout;</script>'); }); } }] });
 let browser;
 try {
   await server.listen();
@@ -51,10 +51,14 @@ try {
   await fresh(); await open();
   const geometry = await page.evaluate(() => layout(document.querySelector('canvas')));
   assert.deepEqual(geometry.rect, { x: 0, y: 0, width: 1280, height: 720 });
+  assert.notDeepEqual(await page.evaluate(() => {
+    const box = document.querySelector('canvas').getBoundingClientRect();
+    return { x: box.x * devicePixelRatio, y: box.y * devicePixelRatio, width: box.width * devicePixelRatio, height: box.height * devicePixelRatio };
+  }), geometry.rect, 'native VLC uses the stable video surface instead of a temporarily offset or undersized canvas');
   assert.equal(geometry.holes.length, 1);
   assert.equal(geometry.holes[0].y, 600);
   const clipped = await page.evaluate(() => {
-    const parent = document.querySelector('.pv-video-surface');
+    const parent = document.querySelector('.clip-parent');
     parent.style.cssText = 'width:500px;height:180px;overflow:hidden';
     const geometry = layout(document.querySelector('canvas'));
     parent.style.cssText = '';
@@ -66,7 +70,7 @@ try {
   assert.equal(exposed(300, 400), false, 'video cannot bleed below the overflow-clipped parent');
   assert.equal(exposed(1100, 200), false, 'video cannot bleed beside the overflow-clipped parent');
   assert.equal(await page.evaluate(() => {
-    const parent = document.querySelector('.pv-video-surface');
+    const parent = document.querySelector('.clip-parent');
     parent.style.visibility = 'hidden';
     const visible = layout(document.querySelector('canvas')).visible;
     parent.style.visibility = '';

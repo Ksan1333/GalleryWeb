@@ -11,16 +11,21 @@ const rendered = (element: Element) => {
 };
 export function surfaceLayout(element: HTMLElement): Layout {
     const dpr = window.devicePixelRatio || 1;
-    const bounds = element.getBoundingClientRect();
+    // The canvas is only a transparent anchor for the native HWND. Replaced
+    // elements can temporarily retain an intrinsic aspect ratio while the grid
+    // is settling, which used to shrink/offset VLC and make the top appear cut
+    // off. The actual playback hit-area is the stable surface container.
+    const surface = element.closest<HTMLElement>(".pv-video-surface") ?? element;
+    const bounds = surface.getBoundingClientRect();
     const rect = { x: Math.round(bounds.x * dpr), y: Math.round(bounds.y * dpr), width: Math.round(bounds.width * dpr), height: Math.round(bounds.height * dpr) };
-    const blocked = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].some(dialog => !dialog.contains(element) && rendered(dialog));
-    let visible = element.isConnected && !document.hidden && !blocked && !element.closest('[inert]') && rendered(element) && bounds.width > 0 && bounds.height > 0;
+    const blocked = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].some(dialog => !dialog.contains(surface) && rendered(dialog));
+    let visible = surface.isConnected && !document.hidden && !blocked && !surface.closest('[inert]') && rendered(surface) && bounds.width > 0 && bounds.height > 0;
     let left = Math.max(bounds.left, 0), top = Math.max(bounds.top, 0);
     let right = Math.min(bounds.right, window.innerWidth), bottom = Math.min(bounds.bottom, window.innerHeight);
     // HWND video is outside the DOM compositor: CSS overflow does not clip it.
     // Preserve the full video rectangle/aspect ratio, but cut away everything
     // outside each ancestor's visible content box before exposing the surface.
-    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    for (let parent = surface.parentElement; parent; parent = parent.parentElement) {
         if (!rendered(parent)) visible = false;
         const style = getComputedStyle(parent);
         const box = parent.getBoundingClientRect();
@@ -43,7 +48,7 @@ export function surfaceLayout(element: HTMLElement): Layout {
     if (clipTop > 0) holes.push({ x: 0, y: 0, width: rect.width, height: Math.min(rect.height, clipTop) });
     if (clipBottom < rect.height) holes.push({ x: 0, y: Math.max(0, clipBottom), width: rect.width, height: rect.height - Math.max(0, clipBottom) });
     visible &&= clipRight > clipLeft && clipBottom > clipTop;
-    holes.push(...[...document.querySelectorAll(overlays)].filter(node => !node.contains(element) && rendered(node)).map(node => node.getBoundingClientRect()).filter(other => other.right > bounds.left && other.left < bounds.right && other.bottom > bounds.top && other.top < bounds.bottom).map(other => ({
+    holes.push(...[...document.querySelectorAll(overlays)].filter(node => !node.contains(surface) && rendered(node)).map(node => node.getBoundingClientRect()).filter(other => other.right > bounds.left && other.left < bounds.right && other.bottom > bounds.top && other.top < bounds.bottom).map(other => ({
         x: Math.floor((other.left - bounds.left) * dpr), y: Math.floor((other.top - bounds.top) * dpr),
         width: Math.ceil(other.width * dpr) + 2, height: Math.ceil(other.height * dpr) + 2,
     })));
@@ -66,6 +71,8 @@ export class NativeVideoSurface {
     constructor(private element: HTMLElement, private sessionId: string, private onError: (error: unknown) => void) {
         this.resize = new ResizeObserver(this.schedule);
         this.resize.observe(element);
+        const surface = element.closest<HTMLElement>(".pv-video-surface");
+        if (surface && surface !== element) this.resize.observe(surface);
         this.mutations = new MutationObserver(this.schedule);
         this.mutations.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "hidden", "inert", "aria-modal"] });
         window.addEventListener("resize", this.schedule);

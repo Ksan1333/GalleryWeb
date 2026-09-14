@@ -399,6 +399,29 @@ try {
   }
   if(!diagnose) {
     await page.goto(base+'?direct');
+    await page.locator('.pv-video-surface').waitFor();
+    const edgeTap = async direction => page.evaluate(({direction,id})=>{
+      const main=document.querySelector('.pv-viewer-main'),surface=document.querySelector('.pv-video-surface');
+      const mainRect=main.getBoundingClientRect(),surfaceRect=surface.getBoundingClientRect();
+      const clientX=direction<0?Math.max(mainRect.left+2,surfaceRect.left+2):Math.min(mainRect.right-2,surfaceRect.right-2);
+      const clientY=surfaceRect.top+surfaceRect.height/2;
+      for(const type of ['pointerdown','pointerup'])surface.dispatchEvent(new PointerEvent(type,{
+        bubbles:true,pointerId:id,pointerType:'mouse',isPrimary:true,button:0,clientX,clientY,
+      }));
+    },{direction,id:direction<0?31:32});
+    const pausesBeforeEdgeNavigation=await page.evaluate(()=>window.__fixture.pauseCalls);
+    await edgeTap(1);
+    await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='2.webm');
+    await edgeTap(-1);
+    await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='1.webm');
+    await page.waitForTimeout(550);
+    assert.equal(await page.evaluate(()=>window.__fixture.pauseCalls),pausesBeforeEdgeNavigation,
+      'edge navigation does not also toggle video playback');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='2.webm');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='1.webm');
+    console.log('Viewer edge taps and Left/Right keys navigate media without toggling playback.');
     await page.getByRole('button',{name:'一覧パネル',exact:true}).click();
     await page.locator('.pv-viewer-rail-name').first().waitFor();
     await page.evaluate(()=>{
@@ -426,6 +449,12 @@ try {
     await page.getByRole('button',{name:'次の本',exact:true}).waitFor();
     assert.deepEqual(await page.locator('.pv-book-controls button').allTextContents(),['次の本','次のページ','前のページ','前の本'],
       'book navigation places next page/book on the left and previous page/book on the right');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='10.zip');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='2.zip');
+    assert.equal(await page.locator('.pv-book-page-seek input').getAttribute('aria-valuetext'),'1ページ / 全2ページ',
+      'Left/Right changes books without consuming the book page controls');
     for(const viewport of [{width:760,height:600},{width:1024,height:768},{width:1440,height:900}]) {
       await page.setViewportSize(viewport);
       await assertFooterLayout(page,viewport,'book');

@@ -3564,6 +3564,15 @@ export function MediaViewer({
   const [railLayout, setRailLayout] = useState<ViewerPanelPlacement>("bottom");
   const [recommendSheetOpen, setRecommendSheetOpen] = useState(false);
   const [viewerRailOpen, setViewerRailOpen] = useState(false);
+  const viewerNavigationRequestRef = useRef(0);
+  const edgeNavigationPressRef = useRef<{
+    id: number;
+    x: number;
+    y: number;
+    at: number;
+    direction: -1 | 1;
+  } | undefined>(undefined);
+  const suppressEdgeClickRef = useRef<{ until: number; x: number; y: number } | undefined>(undefined);
   const infoLauncherRef = useRef<HTMLButtonElement>(null);
   const railLauncherRef = useRef<HTMLButtonElement>(null);
   const closeInfoPanel = useCallback(() => {
@@ -3769,6 +3778,78 @@ export function MediaViewer({
   const selectViewerRailItem = useCallback((mediaId: string, index: number) => {
     changeActive(mediaId, viewerRailIncludesAllMedia ? index : undefined);
   }, [changeActive, viewerRailIncludesAllMedia]);
+
+  const navigateViewerMedia = useCallback(async (direction: -1 | 1) => {
+    const originId = activeIdRef.current;
+    const currentIndex = viewerRailIncludesAllMedia
+      ? activeCollectionIndexRef.current
+      : viewerRailItems.findIndex((candidate) => candidate.id === originId);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= viewerRailItemCount) return;
+    const request = ++viewerNavigationRequestRef.current;
+    try {
+      const nextItem = viewerRailIncludesAllMedia
+        ? await loadCollectionItem(nextIndex)
+        : viewerRailItems[nextIndex];
+      if (!nextItem || request !== viewerNavigationRequestRef.current || activeIdRef.current !== originId) return;
+      changeActive(nextItem.id, viewerRailIncludesAllMedia ? nextIndex : undefined);
+    } catch (cause) {
+      if (request === viewerNavigationRequestRef.current) {
+        setError(cause instanceof Error ? cause.message : "次のメディアを読み込めませんでした。");
+      }
+    }
+  }, [changeActive, loadCollectionItem, viewerRailIncludesAllMedia, viewerRailItemCount, viewerRailItems]);
+
+  const startEdgeNavigation = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    const target = event.target instanceof Element ? event.target : undefined;
+    if (target?.closest('.pv-video-controls, .pv-book-page-seek, button, input, textarea, select, a[href], [contenteditable="true"], [role="menu"], [role="listbox"], [role="combobox"]')) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const edgeWidth = Math.min(120, Math.max(56, bounds.width * 0.12));
+    const localX = event.clientX - bounds.left;
+    const direction: -1 | 1 | undefined = localX <= edgeWidth
+      ? -1
+      : localX >= bounds.width - edgeWidth ? 1 : undefined;
+    if (!direction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    edgeNavigationPressRef.current = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      at: performance.now(),
+      direction,
+    };
+    if (event.isTrusted) event.currentTarget.setPointerCapture?.(event.pointerId);
+  }, []);
+
+  const moveEdgeNavigation = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const press = edgeNavigationPressRef.current;
+    if (!press || press.id !== event.pointerId) return;
+    event.stopPropagation();
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 14) {
+      edgeNavigationPressRef.current = undefined;
+    }
+  }, []);
+
+  const finishEdgeNavigation = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const press = edgeNavigationPressRef.current;
+    if (!press || press.id !== event.pointerId) return;
+    edgeNavigationPressRef.current = undefined;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.isTrusted && event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
+    if (performance.now() - press.at > 450
+      || Math.hypot(event.clientX - press.x, event.clientY - press.y) > 14) return;
+    suppressEdgeClickRef.current = { until: performance.now() + 500, x: press.x, y: press.y };
+    void navigateViewerMedia(press.direction);
+  }, [navigateViewerMedia]);
+
+  const cancelEdgeNavigation = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (edgeNavigationPressRef.current?.id === event.pointerId) edgeNavigationPressRef.current = undefined;
+  }, []);
 
   const selectRecommendation = useCallback((candidate: MediaItem) => {
     setRecommendationItems((current) => {
@@ -4074,23 +4155,16 @@ export function MediaViewer({
       }
       if (!item || showTagEditor || showGifFrames || showBookSettings || showBookmarkList) return;
       if (target?.closest('input, textarea, select, button, a[href], [contenteditable="true"], [role="listbox"], [role="combobox"], [role="menu"]')) return;
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        void navigateViewerMedia(event.key === "ArrowLeft" ? -1 : 1);
+        return;
+      }
       const pageStep = bookViewMode === "spread" ? 2 : 1;
-      if ((item.kind === "pdf" || item.kind === "archive") && ["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+      if ((item.kind === "pdf" || item.kind === "archive") && ["Home", "End", "PageUp", "PageDown"].includes(event.key)) {
         event.preventDefault();
         setPageIndex((current) => bookSeekKeyPage(event.key, current, pageCount, bookBinding, pageStep) ?? current);
         return;
-      }
-      if (event.key === "ArrowLeft") {
-        if (item.kind === "video") {
-          event.preventDefault();
-          videoRef.current && (videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - viewerControlPreferences.videoSeekSeconds));
-        }
-      }
-      if (event.key === "ArrowRight") {
-        if (item.kind === "video" && videoRef.current) {
-          event.preventDefault();
-          videoRef.current.currentTime = Math.min(videoRef.current.duration || Number.MAX_SAFE_INTEGER, videoRef.current.currentTime + viewerControlPreferences.videoSeekSeconds);
-        }
       }
       if ((event.key === "r" || event.key === "R") && (item.kind === "image" || item.kind === "gif")) {
         event.preventDefault();
@@ -4101,7 +4175,7 @@ export function MediaViewer({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [bookBinding, bookViewMode, changeFullscreen, chromeHidden, isFullscreen, closeGifFrames, closeInfoPanel, closeRailPanel, imageContextMenu, item, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerControlPreferences.videoSeekSeconds, viewerRailOpen]);
+  }, [bookBinding, bookViewMode, changeFullscreen, chromeHidden, isFullscreen, closeGifFrames, closeInfoPanel, closeRailPanel, imageContextMenu, item, navigateViewerMedia, onClose, pageCount, recommendSheetOpen, showBookmarkList, showBookSettings, showGifFrames, showTagEditor, viewerRailOpen]);
 
   useEffect(() => {
     if (!message) return;
@@ -4792,7 +4866,23 @@ export function MediaViewer({
         </header>}
 
         <div className={`pv-viewer-content-grid info-at-${infoLayout} rail-at-${railLayout}${recommendSheetOpen ? "" : " info-panel-collapsed"}${viewerRailOpen ? "" : " rail-panel-collapsed"}`}>
-          <main className="pv-viewer-main">
+          <main
+            className="pv-viewer-main"
+            aria-label="メディア表示。左端をタップすると前、右端をタップすると次のメディアへ移動"
+            title="左端をタップ: 前のメディア／右端をタップ: 次のメディア"
+            onPointerDownCapture={startEdgeNavigation}
+            onPointerMoveCapture={moveEdgeNavigation}
+            onPointerUpCapture={finishEdgeNavigation}
+            onPointerCancelCapture={cancelEdgeNavigation}
+            onClickCapture={(event) => {
+              const suppressed = suppressEdgeClickRef.current;
+              if (!suppressed || performance.now() >= suppressed.until
+                || Math.hypot(event.clientX - suppressed.x, event.clientY - suppressed.y) > 24) return;
+              suppressEdgeClickRef.current = undefined;
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+          >
             {viewerContent}
             {isBook && showBookSettings && (
             <aside className="pv-book-side-panel pv-book-settings-panel" role="dialog" aria-label="ブック表示設定">
