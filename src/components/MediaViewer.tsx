@@ -2728,6 +2728,8 @@ function VideoViewer({
       )}
       <div
         className="pv-video-surface"
+        data-video-width={item.width ?? undefined}
+        data-video-height={item.height ?? undefined}
         onWheel={handleVolumeWheel}
         role="button"
         tabIndex={0}
@@ -3564,6 +3566,7 @@ export function MediaViewer({
   const [railLayout, setRailLayout] = useState<ViewerPanelPlacement>("bottom");
   const [recommendSheetOpen, setRecommendSheetOpen] = useState(false);
   const [viewerRailOpen, setViewerRailOpen] = useState(false);
+  const [edgeNavigationHover, setEdgeNavigationHover] = useState<-1 | 1>();
   const viewerNavigationRequestRef = useRef(0);
   const edgeNavigationPressRef = useRef<{
     id: number;
@@ -3800,16 +3803,18 @@ export function MediaViewer({
     }
   }, [changeActive, loadCollectionItem, viewerRailIncludesAllMedia, viewerRailItemCount, viewerRailItems]);
 
-  const startEdgeNavigation = useCallback((event: React.PointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || !event.isPrimary) return;
+  const edgeDirectionAt = useCallback((event: React.PointerEvent<HTMLElement>): -1 | 1 | undefined => {
     const target = event.target instanceof Element ? event.target : undefined;
-    if (target?.closest('.pv-video-controls, .pv-book-page-seek, button, input, textarea, select, a[href], [contenteditable="true"], [role="menu"], [role="listbox"], [role="combobox"]')) return;
+    if (target?.closest('.pv-video-controls, .pv-book-page-seek, button, input, textarea, select, a[href], [contenteditable="true"], [role="menu"], [role="listbox"], [role="combobox"]')) return undefined;
     const bounds = event.currentTarget.getBoundingClientRect();
     const edgeWidth = Math.min(120, Math.max(56, bounds.width * 0.12));
     const localX = event.clientX - bounds.left;
-    const direction: -1 | 1 | undefined = localX <= edgeWidth
-      ? -1
-      : localX >= bounds.width - edgeWidth ? 1 : undefined;
+    return localX <= edgeWidth ? -1 : localX >= bounds.width - edgeWidth ? 1 : undefined;
+  }, []);
+
+  const startEdgeNavigation = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    const direction = edgeDirectionAt(event);
     if (!direction) return;
     event.preventDefault();
     event.stopPropagation();
@@ -3821,9 +3826,22 @@ export function MediaViewer({
       direction,
     };
     if (event.isTrusted) event.currentTarget.setPointerCapture?.(event.pointerId);
-  }, []);
+  }, [edgeDirectionAt]);
 
   const moveEdgeNavigation = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const activePress = edgeNavigationPressRef.current;
+    if (activePress) {
+      trackEdgeNavigationPress(event);
+      setEdgeNavigationHover(undefined);
+      return;
+    }
+    if (event.isPrimary && event.pointerType !== "touch") {
+      const direction = edgeDirectionAt(event);
+      setEdgeNavigationHover((current) => current === direction ? current : direction);
+    }
+  }, [edgeDirectionAt]);
+
+  const trackEdgeNavigationPress = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const press = edgeNavigationPressRef.current;
     if (!press || press.id !== event.pointerId) return;
     event.stopPropagation();
@@ -3849,7 +3867,18 @@ export function MediaViewer({
 
   const cancelEdgeNavigation = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (edgeNavigationPressRef.current?.id === event.pointerId) edgeNavigationPressRef.current = undefined;
+    setEdgeNavigationHover(undefined);
   }, []);
+
+  const edgeNavigationHint: -1 | 1 | undefined = edgeNavigationHover === undefined ? undefined : (() => {
+    const currentIndex = viewerRailIncludesAllMedia
+      ? activeCollectionIndexRef.current
+      : viewerRailItems.findIndex((candidate) => candidate.id === activeIdRef.current);
+    const available = currentIndex >= 0 && (edgeNavigationHover < 0
+      ? currentIndex > 0
+      : currentIndex + 1 < viewerRailItemCount);
+    return available ? edgeNavigationHover : undefined;
+  })();
 
   const selectRecommendation = useCallback((candidate: MediaItem) => {
     setRecommendationItems((current) => {
@@ -4155,12 +4184,20 @@ export function MediaViewer({
       }
       if (!item || showTagEditor || showGifFrames || showBookSettings || showBookmarkList) return;
       if (target?.closest('input, textarea, select, button, a[href], [contenteditable="true"], [role="listbox"], [role="combobox"], [role="menu"]')) return;
+      const pageStep = bookViewMode === "spread" ? 2 : 1;
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-        event.preventDefault();
-        void navigateViewerMedia(event.key === "ArrowLeft" ? -1 : 1);
+        const isBook = item.kind === "pdf" || item.kind === "archive";
+        const bookPageShortcut = isBook && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+        if (bookPageShortcut) {
+          event.preventDefault();
+          setPageIndex((current) => bookSeekKeyPage(event.key, current, pageCount, bookBinding, pageStep) ?? current);
+        }
+        else if (!isBook || (event.ctrlKey && !event.metaKey && !event.altKey)) {
+          event.preventDefault();
+          void navigateViewerMedia(event.key === "ArrowLeft" ? -1 : 1);
+        }
         return;
       }
-      const pageStep = bookViewMode === "spread" ? 2 : 1;
       if ((item.kind === "pdf" || item.kind === "archive") && ["Home", "End", "PageUp", "PageDown"].includes(event.key)) {
         event.preventDefault();
         setPageIndex((current) => bookSeekKeyPage(event.key, current, pageCount, bookBinding, pageStep) ?? current);
@@ -4874,6 +4911,7 @@ export function MediaViewer({
             onPointerMoveCapture={moveEdgeNavigation}
             onPointerUpCapture={finishEdgeNavigation}
             onPointerCancelCapture={cancelEdgeNavigation}
+            onMouseLeave={() => setEdgeNavigationHover(undefined)}
             onClickCapture={(event) => {
               const suppressed = suppressEdgeClickRef.current;
               if (!suppressed || performance.now() >= suppressed.until
@@ -4884,6 +4922,12 @@ export function MediaViewer({
             }}
           >
             {viewerContent}
+            {edgeNavigationHint !== undefined && (
+              <div className={`pv-video-edge-hint ${edgeNavigationHint < 0 ? "is-previous" : "is-next"}`} aria-hidden="true">
+                <Icon name={edgeNavigationHint < 0 ? "arrowLeft" : "arrowRight"} />
+                <span>{edgeNavigationHint < 0 ? "前のメディア" : "次のメディア"}</span>
+              </div>
+            )}
             {isBook && showBookSettings && (
             <aside className="pv-book-side-panel pv-book-settings-panel" role="dialog" aria-label="ブック表示設定">
               <header>

@@ -1187,6 +1187,47 @@
   outline-offset: -3px;
 }
 
+.pv-video-edge-hint {
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  display: flex;
+  width: min(18%, 180px);
+  min-height: 58px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  color: rgba(246, 238, 255, 0.82);
+  background: linear-gradient(90deg, rgba(190, 142, 255, 0.2), rgba(190, 142, 255, 0.04));
+  border: 1px solid rgba(218, 190, 255, 0.38);
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0.72;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 140ms ease;
+}
+
+.pv-video-edge-hint.is-previous {
+  left: 10px;
+  border-left-width: 3px;
+}
+
+.pv-video-edge-hint.is-next {
+  right: 10px;
+  background: linear-gradient(270deg, rgba(190, 142, 255, 0.2), rgba(190, 142, 255, 0.04));
+  border-right-width: 3px;
+}
+
+.pv-video-edge-hint svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+}
+
 .pv-video-wheel-feedback {
   position: absolute;
   z-index: 3;

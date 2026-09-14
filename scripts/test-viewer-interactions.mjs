@@ -417,6 +417,13 @@ try {
     await page.waitForTimeout(550);
     assert.equal(await page.evaluate(()=>window.__fixture.pauseCalls),pausesBeforeEdgeNavigation,
       'edge navigation does not also toggle video playback');
+    const surfaceBox=await page.locator('.pv-video-surface').boundingBox();
+    await page.locator('.pv-video-surface').hover({position:{x:surfaceBox.width-2,y:surfaceBox.height/2}});
+    await page.locator('.pv-video-edge-hint.is-next').waitFor();
+    assert.equal(await page.locator('.pv-video-edge-hint.is-next').textContent(),'次のメディア',
+      'hovering a usable edge exposes the next-media hint');
+    await page.mouse.move(0,0);
+    await page.locator('.pv-video-edge-hint').waitFor({state:'detached'});
     await page.keyboard.press('ArrowRight');
     await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='2.webm');
     await page.keyboard.press('ArrowLeft');
@@ -450,11 +457,13 @@ try {
     assert.deepEqual(await page.locator('.pv-book-controls button').allTextContents(),['次の本','次のページ','前のページ','前の本'],
       'book navigation places next page/book on the left and previous page/book on the right');
     await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='2.zip');
+    await page.keyboard.press('Control+ArrowRight');
     await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='10.zip');
-    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('Control+ArrowLeft');
     await page.waitForFunction(()=>document.querySelector('#pv-viewer-title').textContent==='2.zip');
     assert.equal(await page.locator('.pv-book-page-seek input').getAttribute('aria-valuetext'),'1ページ / 全2ページ',
-      'Left/Right changes books without consuming the book page controls');
+      'book arrows stay on page navigation while Control+Arrow changes books');
     for(const viewport of [{width:760,height:600},{width:1024,height:768},{width:1440,height:900}]) {
       await page.setViewportSize(viewport);
       await assertFooterLayout(page,viewport,'book');

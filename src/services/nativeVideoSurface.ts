@@ -4,7 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 type Rect = { x: number; y: number; width: number; height: number };
 type Layout = { rect: Rect; holes: Rect[]; visible: boolean };
 type Input = { kind: string; x: number; y: number; delta: number; buttons: number };
-const overlays = ".pv-video-controls,.pv-video-status,.pv-video-wheel-feedback,.pv-video-seek-preview,.pv-viewer-menu-restore,.pv-viewer-toast,.pv-media-info-panel,.pv-viewer-rail,.pv-viewer-header,.pv-viewer-footer,.pv-viewer-panel-drop-preview,[role=menu],[data-native-video-occluder]";
+const overlays = ".pv-video-controls,.pv-video-status,.pv-video-wheel-feedback,.pv-video-seek-preview,.pv-video-edge-hint,.pv-viewer-menu-restore,.pv-viewer-toast,.pv-media-info-panel,.pv-viewer-rail,.pv-viewer-header,.pv-viewer-footer,.pv-viewer-panel-drop-preview,[role=menu],[data-native-video-occluder]";
 const rendered = (element: Element) => {
     const style = getComputedStyle(element);
     return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0.01;
@@ -16,12 +16,29 @@ export function surfaceLayout(element: HTMLElement): Layout {
     // is settling, which used to shrink/offset VLC and make the top appear cut
     // off. The actual playback hit-area is the stable surface container.
     const surface = element.closest<HTMLElement>(".pv-video-surface") ?? element;
-    const bounds = surface.getBoundingClientRect();
-    const rect = { x: Math.round(bounds.x * dpr), y: Math.round(bounds.y * dpr), width: Math.round(bounds.width * dpr), height: Math.round(bounds.height * dpr) };
+    const stage = surface.getBoundingClientRect();
+    // A native VLC child window does not understand CSS object-fit. If it is
+    // given a wide viewer stage for a 16:9 source, VLC can fill that window by
+    // cropping the top/bottom. Use an aspect-fitted child rectangle instead;
+    // the unused stage area stays covered by the viewer background.
+    const sourceWidth = Number(surface.dataset.videoWidth);
+    const sourceHeight = Number(surface.dataset.videoHeight);
+    let bounds = { left: stage.left, top: stage.top, width: stage.width, height: stage.height };
+    if (sourceWidth > 0 && sourceHeight > 0 && stage.width > 0 && stage.height > 0) {
+        const sourceAspect = sourceWidth / sourceHeight;
+        const stageAspect = stage.width / stage.height;
+        if (stageAspect > sourceAspect) {
+            bounds = { width: stage.height * sourceAspect, height: stage.height, left: stage.left + (stage.width - stage.height * sourceAspect) / 2, top: stage.top };
+        }
+        else if (stageAspect < sourceAspect) {
+            bounds = { width: stage.width, height: stage.width / sourceAspect, left: stage.left, top: stage.top + (stage.height - stage.width / sourceAspect) / 2 };
+        }
+    }
+    const rect = { x: Math.round(bounds.left * dpr), y: Math.round(bounds.top * dpr), width: Math.round(bounds.width * dpr), height: Math.round(bounds.height * dpr) };
     const blocked = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].some(dialog => !dialog.contains(surface) && rendered(dialog));
     let visible = surface.isConnected && !document.hidden && !blocked && !surface.closest('[inert]') && rendered(surface) && bounds.width > 0 && bounds.height > 0;
     let left = Math.max(bounds.left, 0), top = Math.max(bounds.top, 0);
-    let right = Math.min(bounds.right, window.innerWidth), bottom = Math.min(bounds.bottom, window.innerHeight);
+    let right = Math.min(bounds.left + bounds.width, window.innerWidth), bottom = Math.min(bounds.top + bounds.height, window.innerHeight);
     // HWND video is outside the DOM compositor: CSS overflow does not clip it.
     // Preserve the full video rectangle/aspect ratio, but cut away everything
     // outside each ancestor's visible content box before exposing the surface.
@@ -48,7 +65,7 @@ export function surfaceLayout(element: HTMLElement): Layout {
     if (clipTop > 0) holes.push({ x: 0, y: 0, width: rect.width, height: Math.min(rect.height, clipTop) });
     if (clipBottom < rect.height) holes.push({ x: 0, y: Math.max(0, clipBottom), width: rect.width, height: rect.height - Math.max(0, clipBottom) });
     visible &&= clipRight > clipLeft && clipBottom > clipTop;
-    holes.push(...[...document.querySelectorAll(overlays)].filter(node => !node.contains(surface) && rendered(node)).map(node => node.getBoundingClientRect()).filter(other => other.right > bounds.left && other.left < bounds.right && other.bottom > bounds.top && other.top < bounds.bottom).map(other => ({
+    holes.push(...[...document.querySelectorAll(overlays)].filter(node => !node.contains(surface) && rendered(node)).map(node => node.getBoundingClientRect()).filter(other => other.right > bounds.left && other.left < bounds.left + bounds.width && other.bottom > bounds.top && other.top < bounds.top + bounds.height).map(other => ({
         x: Math.floor((other.left - bounds.left) * dpr), y: Math.floor((other.top - bounds.top) * dpr),
         width: Math.ceil(other.width * dpr) + 2, height: Math.ceil(other.height * dpr) + 2,
     })));

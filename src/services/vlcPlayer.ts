@@ -131,6 +131,13 @@ export class VlcVideoHandle extends EventTarget {
             this.duration = status.duration;
             this.videoWidth = status.width;
             this.videoHeight = status.height;
+            if (status.width > 0 && status.height > 0) {
+                const surface = this.canvas.closest<HTMLElement>(".pv-video-surface");
+                if (surface) {
+                    surface.dataset.videoWidth = String(status.width);
+                    surface.dataset.videoHeight = String(status.height);
+                }
+            }
             if (this.readyState < 2 && status.width > 0 && status.height > 0 && ["playing", "paused"].includes(status.state)) {
                 this.readyState = 4;
                 this.emit("loadeddata");
