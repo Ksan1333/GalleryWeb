@@ -570,6 +570,7 @@ impl Player {
             if silent {
                 (api.media_add_option)(media, c":no-audio".as_ptr());
             }
+            let mut native_output = false;
             let mut player = Self {
                 api: api.clone(),
                 raw,
@@ -579,6 +580,7 @@ impl Player {
             };
             match output {
                 Output::Native(hwnd) => {
+                    native_output = true;
                     // Never call video_set_callbacks here: VLC 3 disables hardware
                     // decoding when that API is used, even with --avcodec-hw=any.
                     (api.set_hwnd)(raw, hwnd as Handle);
@@ -621,6 +623,14 @@ impl Player {
             }
             (api.set_media)(raw, media);
             (api.media_release)(media);
+            if native_output {
+                // Some VLC vout modules apply their defaults when the media is
+                // attached. Reapply the automatic scale and source aspect after
+                // set_media as well, otherwise a wide viewer can crop the top
+                // or bottom even though the native child has the right bounds.
+                (api.set_scale)(raw, 0.0);
+                (api.set_aspect_ratio)(raw, ptr::null());
+            }
             Ok(player)
         }
     }

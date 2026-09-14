@@ -11,6 +11,15 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.7.6",
+    date: "2026-09-14",
+    title: "動画の表示比率を確実に適用",
+    changes: [
+      "libVLCへメディアを設定した後にも自動スケールと元のアスペクト比リセットを再適用",
+      "一部の動画でビュワー上部・下部が切れる表示を修正",
+    ],
+  },
+  {
     version: "0.7.5",
     date: "2026-09-14",
     title: "動画の再生開始判定を安定化",
