@@ -43,8 +43,14 @@ export function surfaceLayout(element: HTMLElement): Layout {
     // Preserve the full video rectangle/aspect ratio, but cut away everything
     // outside each ancestor's visible content box before exposing the surface.
     for (let parent = surface.parentElement; parent; parent = parent.parentElement) {
-        if (!rendered(parent)) visible = false;
+        // The viewer is mounted inside the gallery page, whose scroll frame
+        // uses overflow:hidden.  That page is behind this fixed backdrop and
+        // must not clip the native HWND.  A fixed containing block establishes
+        // the viewport boundary; ancestors above it are outside the viewer.
         const style = getComputedStyle(parent);
+        if (!rendered(parent)) visible = false;
+        const position = style.position;
+        if (position === "fixed") break;
         const box = parent.getBoundingClientRect();
         if (/(hidden|clip|auto|scroll)/.test(style.overflowX)) {
             left = Math.max(left, box.left + parent.clientLeft);

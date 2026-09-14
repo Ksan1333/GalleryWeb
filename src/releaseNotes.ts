@@ -11,6 +11,15 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.7.9",
+    date: "2026-09-14",
+    title: "動画上端の欠落原因を修正",
+    changes: [
+      "固定ビュワー内の動画が背後のギャラリー親要素のoverflow:hiddenで切り取られる問題を修正",
+      "ネイティブ動画の境界計算を固定ビュワー内に限定し、上端・左端を正しく表示",
+    ],
+  },
+  {
     version: "0.7.8",
     date: "2026-09-14",
     title: "動画の上端欠落を修正",
