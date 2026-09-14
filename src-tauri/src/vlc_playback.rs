@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::{
     collections::HashMap,
-    ffi::{CString, c_char, c_int, c_uint, c_void},
+    ffi::{CString, c_char, c_float, c_int, c_uint, c_void},
     path::Path,
     ptr,
     sync::{
@@ -76,6 +76,8 @@ struct Api {
     set_volume: unsafe extern "C" fn(Handle, c_int) -> c_int,
     set_mute: unsafe extern "C" fn(Handle, c_int),
     set_hwnd: unsafe extern "C" fn(Handle, Handle),
+    set_scale: unsafe extern "C" fn(Handle, c_float),
+    set_aspect_ratio: unsafe extern "C" fn(Handle, *const c_char),
     mouse_input: unsafe extern "C" fn(Handle, c_uint),
     key_input: unsafe extern "C" fn(Handle, c_uint),
     video_size: unsafe extern "C" fn(Handle, c_uint, *mut c_uint, *mut c_uint) -> c_int,
@@ -170,6 +172,8 @@ impl Api {
                 set_volume: symbol!("libvlc_audio_set_volume"),
                 set_mute: symbol!("libvlc_audio_set_mute"),
                 set_hwnd: symbol!("libvlc_media_player_set_hwnd"),
+                set_scale: symbol!("libvlc_video_set_scale"),
+                set_aspect_ratio: symbol!("libvlc_video_set_aspect_ratio"),
                 mouse_input: symbol!("libvlc_video_set_mouse_input"),
                 key_input: symbol!("libvlc_video_set_key_input"),
                 video_size: symbol!("libvlc_video_get_size"),
@@ -566,6 +570,12 @@ impl Player {
                     // Never call video_set_callbacks here: VLC 3 disables hardware
                     // decoding when that API is used, even with --avcodec-hw=any.
                     (api.set_hwnd)(raw, hwnd as Handle);
+                    // A native child window has no CSS object-fit equivalent.
+                    // Explicitly reset VLC's scale and aspect override so the
+                    // vout fits the source into this window instead of filling
+                    // it and cropping the top/bottom of wide viewer stages.
+                    (api.set_scale)(raw, 0.0);
+                    (api.set_aspect_ratio)(raw, ptr::null());
                     (api.mouse_input)(raw, 0);
                     (api.key_input)(raw, 0);
                 }

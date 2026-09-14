@@ -11,11 +11,13 @@ assert.ok(!client.includes('createFrameRenderer'), 'no WebGL re-upload');
 const native = readFileSync(resolve(root, 'src-tauri/src/vlc_playback.rs'), 'utf8');
 assert.ok(native.includes('Output::Native(session.surface.video)'));
 assert.ok(native.includes('libvlc_media_player_set_hwnd'));
+assert.ok(native.includes('libvlc_video_set_scale'));
+assert.ok(native.includes('libvlc_video_set_aspect_ratio'));
 assert.match(native, /pub async fn open_vlc_player[\s\S]*?spawn_blocking/, 'cross-thread HWND creation never blocks the WebView UI thread');
 assert.ok(!native.includes('pub async fn read_vlc_frame'));
 const surface = readFileSync(resolve(root, 'src-tauri/src/vlc_surface.rs'), 'utf8');
 assert.ok(!surface.includes('ShowCursor(') && !surface.includes('SetSystemCursor('));
-const server = await createServer({ root, configFile: false, logLevel: 'error', server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/src-tauri/**', '**/release/**', '**/artifacts/**'] } }, plugins: [{ name: 'fixture', configureServer(vite) { vite.middlewares.use('/__vlc', (_, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><style>body{margin:0}.clip-parent{width:640px;height:360px}.pv-video-surface{position:relative;width:640px;height:360px}.pv-video-surface canvas{position:absolute;left:80px;top:90px;width:320px;height:180px}.pv-video-controls{position:absolute;left:0;top:300px;width:640px;height:60px;background:black}</style><section role="dialog" aria-modal="true"><div class="clip-parent"><div class="pv-video-surface" tabindex="0" data-video-width="640" data-video-height="360"><canvas></canvas></div></div><div class="pv-video-controls"></div></section><script type="module">import {VlcVideoHandle} from "/src/services/vlcPlayer.ts";import {surfaceLayout} from "/src/services/nativeVideoSurface.ts";window.Handle=VlcVideoHandle;window.layout=surfaceLayout;</script>'); }); } }] });
+const server = await createServer({ root, configFile: false, logLevel: 'error', server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/src-tauri/**', '**/release/**', '**/artifacts/**'] } }, plugins: [{ name: 'fixture', configureServer(vite) { vite.middlewares.use('/__vlc', (_, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><style>body{margin:0}.clip-parent{width:640px;height:360px}.pv-video-surface{position:relative;width:640px;height:360px}.pv-video-surface canvas{position:absolute;left:80px;top:90px;width:320px;height:180px}.pv-video-controls{position:absolute;left:0;top:300px;width:640px;height:60px;background:black}</style><section role="dialog" aria-modal="true"><div class="clip-parent"><div class="pv-video-surface" tabindex="0" data-video-width="640" data-video-height="480"><canvas></canvas></div></div><div class="pv-video-controls"></div></section><script type="module">import {VlcVideoHandle} from "/src/services/vlcPlayer.ts";import {surfaceLayout} from "/src/services/nativeVideoSurface.ts";window.Handle=VlcVideoHandle;window.layout=surfaceLayout;</script>'); }); } }] });
 let browser;
 try {
   await server.listen();
@@ -49,6 +51,7 @@ try {
   const fresh = async () => { await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__vlc`); await page.waitForFunction(() => window.Handle); };
   const open = async () => { await page.evaluate(() => { window.player = new Handle(document.querySelector('canvas'), 'a', { volume: .5, muted: false, loop: true }); }); await page.waitForFunction(() => player.readyState === 4 && fixture.calls.some(c => c.command === 'set_vlc_surface')); };
   await fresh(); await open();
+  await page.waitForFunction(() => fixture.calls.some(c => c.command === 'set_vlc_surface' && c.args.layout.rect.width === 1280 && c.args.layout.rect.height === 720), undefined, { timeout: 2000 });
   const geometry = await page.evaluate(() => layout(document.querySelector('canvas')));
   assert.deepEqual(geometry.rect, { x: 0, y: 0, width: 1280, height: 720 });
   assert.notDeepEqual(await page.evaluate(() => {

@@ -11,6 +11,15 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.7.4",
+    date: "2026-09-14",
+    title: "動画のネイティブ表示比率を安定化",
+    changes: [
+      "libVLCへスケール自動調整と元のアスペクト比リセットを明示し、動画の上下が見切れないよう追加修正",
+      "再生開始後に動画の実寸を受け取った直後、ネイティブ表示領域を再計算",
+    ],
+  },
+  {
     version: "0.7.3",
     date: "2026-09-14",
     title: "動画の比率保持とブック操作を改善",

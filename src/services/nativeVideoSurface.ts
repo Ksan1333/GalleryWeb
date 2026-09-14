@@ -91,7 +91,7 @@ export class NativeVideoSurface {
         const surface = element.closest<HTMLElement>(".pv-video-surface");
         if (surface && surface !== element) this.resize.observe(surface);
         this.mutations = new MutationObserver(this.schedule);
-        this.mutations.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "hidden", "inert", "aria-modal"] });
+        this.mutations.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "hidden", "inert", "aria-modal", "data-video-width", "data-video-height"] });
         window.addEventListener("resize", this.schedule);
         document.addEventListener("scroll", this.schedule, true);
         document.addEventListener("visibilitychange", this.visibility);
@@ -140,6 +140,8 @@ export class NativeVideoSurface {
         } catch (error) { if (!this.stopped) this.onError(error); }
         finally { this.sending = false; if (!this.stopped && JSON.stringify(surfaceLayout(this.element)) !== this.last) this.schedule(); }
     }
+    /** Recalculate immediately after libVLC reports the decoded dimensions. */
+    refresh() { this.schedule(); }
     dispose() {
         this.stopped = true;
         if (this.frame !== undefined) cancelAnimationFrame(this.frame);
