@@ -13,6 +13,7 @@ assert.ok(native.includes('Output::Native(session.surface.video)'));
 assert.ok(native.includes('libvlc_media_player_set_hwnd'));
 assert.ok(native.includes('libvlc_video_set_scale'));
 assert.ok(native.includes('libvlc_video_set_aspect_ratio'));
+assert.match(native, /--vout=direct3d9,any/, 'embedded playback prefers the stable D3D9 viewport path');
 assert.match(native, /fn video_ready\([\s\S]*?displayed > 0 \|\| matches!\(state, 3 \| 4\)/, 'native playback does not get stuck when Direct3D11 reports zero displayed frames');
 assert.match(native, /set_media\)\(raw, media\);[\s\S]*set_scale\)\(raw, 0\.0\)/, 'native video scale is re-applied after attaching media');
 assert.match(native, /let has_video = width > 0 && height > 0;[\s\S]*reset_video_geometry\(\);/, 'native video scale is re-applied after the vout negotiates its dimensions');

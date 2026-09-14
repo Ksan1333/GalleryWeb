@@ -197,7 +197,12 @@ impl Api {
                 "--quiet",
                 "--avcodec-threads=0",
                 "--avcodec-hw=any",
-                "--vout=direct3d11,any",
+                // Direct3D11's embedded HWND path can retain a stale viewport
+                // after a media/size change and crop the first rows of a video.
+                // Direct3D9 uses the same GPU-backed HWND output but recomputes
+                // the complete source rectangle on every resize. Keep `any` as
+                // a fallback for systems where the D3D9 module is unavailable.
+                "--vout=direct3d9,any",
                 "--mouse-hide-timeout=2147483647",
                 "--file-caching=300",
             ];

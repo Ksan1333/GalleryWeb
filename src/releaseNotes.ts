@@ -11,12 +11,12 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
-    version: "0.7.7",
+    version: "0.7.8",
     date: "2026-09-14",
-    title: "再生開始後の動画比率を修正",
+    title: "動画の上端欠落を修正",
     changes: [
-      "libVLCのビデオ出力が再生開始後に表示比率を初期化しても自動フィットを再適用",
-      "動画上部・下部が見切れたままになる表示を修正",
+      "Windowsの埋め込みlibVLCでDirect3D9を優先し、Direct3D11経路の古い表示領域が残る問題を回避",
+      "Direct3D9が利用できない環境ではlibVLCの自動選択へフォールバック",
     ],
   },
   {
