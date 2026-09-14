@@ -15,6 +15,7 @@ assert.ok(native.includes('libvlc_video_set_scale'));
 assert.ok(native.includes('libvlc_video_set_aspect_ratio'));
 assert.match(native, /fn video_ready\([\s\S]*?displayed > 0 \|\| matches!\(state, 3 \| 4\)/, 'native playback does not get stuck when Direct3D11 reports zero displayed frames');
 assert.match(native, /set_media\)\(raw, media\);[\s\S]*set_scale\)\(raw, 0\.0\)/, 'native video scale is re-applied after attaching media');
+assert.match(native, /let has_video = width > 0 && height > 0;[\s\S]*reset_video_geometry\(\);/, 'native video scale is re-applied after the vout negotiates its dimensions');
 assert.match(native, /pub async fn open_vlc_player[\s\S]*?spawn_blocking/, 'cross-thread HWND creation never blocks the WebView UI thread');
 assert.ok(!native.includes('pub async fn read_vlc_frame'));
 const surface = readFileSync(resolve(root, 'src-tauri/src/vlc_surface.rs'), 'utf8');

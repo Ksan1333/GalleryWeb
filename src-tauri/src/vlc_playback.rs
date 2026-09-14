@@ -503,6 +503,7 @@ impl PlaybackVolume {
 struct Player {
     api: Arc<Api>,
     raw: Handle,
+    native_video: bool,
     #[cfg(test)]
     _sink: Option<Arc<Sink>>,
     _audio: Option<Box<Mutex<AudioLevel>>>,
@@ -574,6 +575,7 @@ impl Player {
             let mut player = Self {
                 api: api.clone(),
                 raw,
+                native_video: false,
                 #[cfg(test)]
                 _sink: None,
                 _audio: None,
@@ -581,6 +583,7 @@ impl Player {
             match output {
                 Output::Native(hwnd) => {
                     native_output = true;
+                    player.native_video = true;
                     // Never call video_set_callbacks here: VLC 3 disables hardware
                     // decoding when that API is used, even with --avcodec-hw=any.
                     (api.set_hwnd)(raw, hwnd as Handle);
@@ -632,6 +635,19 @@ impl Player {
                 (api.set_aspect_ratio)(raw, ptr::null());
             }
             Ok(player)
+        }
+    }
+    fn reset_video_geometry(&self) {
+        if !self.native_video {
+            return;
+        }
+        unsafe {
+            // The vout is created asynchronously by libVLC when playback
+            // starts. Reapply automatic fit after that point as well as after
+            // set_media, because some output modules reset these values when
+            // their first video format is negotiated.
+            (self.api.set_scale)(self.raw, 0.0);
+            (self.api.set_aspect_ratio)(self.raw, ptr::null());
         }
     }
     fn play(&self) -> Result<(), String> {
@@ -853,6 +869,7 @@ fn playback_worker(
     let mut muted = initial_muted;
     player.volume(volume.value, muted);
     player.play()?;
+    player.reset_video_geometry();
     if analysis.as_ref().is_some_and(|p| p.play().is_err()) {
         analysis = None;
     }
@@ -861,6 +878,7 @@ fn playback_worker(
     let mut prior_state = 0;
     let mut desired_pause = false;
     let mut pending_seek = None;
+    let mut geometry_dimensions = (0, 0);
     while !session.cancelled.load(Ordering::Relaxed) {
         for control in receiver.try_iter() {
             match control {
@@ -872,6 +890,7 @@ fn playback_worker(
                         }
                     }
                     player.play()?;
+                    player.reset_video_geometry();
                 }
                 Control::Pause => {
                     desired_pause = true;
@@ -883,6 +902,7 @@ fn playback_worker(
                             (api.stop)(player.raw);
                         }
                         player.play()?;
+                        player.reset_video_geometry();
                     }
                 }
                 Control::Volume {
@@ -954,6 +974,13 @@ fn playback_worker(
             }
         }
         let has_video = width > 0 && height > 0;
+        if has_video && geometry_dimensions != (width, height) {
+            // A vout can negotiate its format after play() returns and reset
+            // the scale/aspect values once more. Reapply at the first reliable
+            // dimensions signal so the native child never stays cropped.
+            player.reset_video_geometry();
+            geometry_dimensions = (width, height);
+        }
         let has_frame = video_ready(state, width, height, stats.displayed);
         if !has_video && started.elapsed() > Duration::from_secs(30) {
             return Err(
@@ -965,6 +992,7 @@ fn playback_worker(
                 (api.stop)(player.raw);
             }
             player.play()?;
+            player.reset_video_geometry();
         }
         prior_state = state;
         if let Ok(mut status) = session.status.lock() {
