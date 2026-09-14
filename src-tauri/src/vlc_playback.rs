@@ -533,6 +533,18 @@ fn vlc_path_text(source: &Path) -> Result<String, String> {
 fn vlc_path(source: &Path) -> Result<CString, String> {
     CString::new(vlc_path_text(source)?).map_err(|e| e.to_string())
 }
+
+/// Returns whether the native player has enough information to expose a
+/// playable video to the WebView.  `libvlc_media_get_stats().displayed` is not
+/// reliable for every Direct3D11 path: some hardware-decoded files report
+/// zero displayed frames even while the native vout has already produced a
+/// frame.  Once VLC reports a video size and is in an active/paused state, the
+/// surface is ready; keeping the stats value as a fast path preserves the
+/// normal behaviour for renderers that do report it.
+fn video_ready(state: c_int, width: c_uint, height: c_uint, displayed: c_int) -> bool {
+    width > 0 && height > 0 && (displayed > 0 || matches!(state, 3 | 4))
+}
+
 impl Player {
     fn open(api: Arc<Api>, source: &Path, output: Output, silent: bool) -> Result<Self, String> {
         let path = vlc_path(source)?;
@@ -931,8 +943,9 @@ fn playback_worker(
                 (api.media_release)(media);
             }
         }
-        let has_frame = width > 0 && height > 0 && stats.displayed > 0;
-        if !has_frame && started.elapsed() > Duration::from_secs(30) {
+        let has_video = width > 0 && height > 0;
+        let has_frame = video_ready(state, width, height, stats.displayed);
+        if !has_video && started.elapsed() > Duration::from_secs(30) {
             return Err(
                 "映像を取得できませんでした。再試行するか、別の動画を開いてください。".into(),
             );
@@ -1352,7 +1365,12 @@ mod tests {
                         (api.media_release)(media);
                     }
                 }
-                if w > 0 && h > 0 && stats.displayed > 0 {
+                if video_ready(
+                    unsafe { (api.get_state)(player.raw) },
+                    w,
+                    h,
+                    stats.displayed,
+                ) {
                     break;
                 }
                 assert!(
@@ -1774,5 +1792,13 @@ mod tests {
             .share_mode(0)
             .open(path);
         assert!(exclusive.is_ok(), "video still locked after close");
+    }
+
+    #[test]
+    fn native_video_ready_does_not_require_displayed_stats() {
+        assert!(video_ready(3, 1280, 720, 0));
+        assert!(video_ready(4, 1280, 720, 0));
+        assert!(!video_ready(2, 1280, 720, 0));
+        assert!(!video_ready(3, 0, 720, 1));
     }
 }
