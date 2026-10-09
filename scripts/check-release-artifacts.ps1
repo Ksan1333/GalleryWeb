@@ -9,7 +9,7 @@ $packageLockText = Get-Content -LiteralPath (Join-Path $projectRoot "package-loc
 $packageLockMatches = [regex]::Matches($packageLockText, '"version"\s*:\s*"([^"]+)"')
 $tauri = Get-Content -LiteralPath (Join-Path $projectRoot "src-tauri\tauri.conf.json") -Raw | ConvertFrom-Json
 $cargoText = Get-Content -LiteralPath (Join-Path $projectRoot "src-tauri\Cargo.toml") -Raw
-$cargoMatch = [regex]::Match($cargoText, '(?m)^version = "([^"]+)"$')
+$cargoMatch = [regex]::Match($cargoText, '(?m)^version = "([^"]+)"\r?$')
 
 if (-not $cargoMatch.Success) {
     throw "Cargo package version was not found"

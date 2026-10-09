@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PixVault for Windows",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "identifier": "com.ninji.galleryweb",
   "build": {
     "beforeDevCommand": "pnpm run prepare:libvlc && pnpm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm run prepare:libvlc && pnpm run build",
+    "beforeBuildCommand": "pnpm run prepare:vcredist && pnpm run prepare:libvlc && pnpm run build",
     "frontendDist": "../dist"
   },
   "app": {

@@ -11,6 +11,16 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.7.10",
+    date: "2026-10-09",
+    title: "WebView直接再生と起動ランタイムの自動導入",
+    changes: [
+      "対応動画はWebViewで元ファイルを直接再生し、非対応・読み込み失敗時だけ同梱libVLCへ切り替え",
+      "再生用の動画変換や一時動画作成は行いません",
+      "セットアップにMicrosoft Visual C++ x64ランタイムを同梱し、不足時に自動導入（UAC確認が必要な場合があります）",
+    ],
+  },
+  {
     version: "0.7.9",
     date: "2026-09-14",
     title: "動画上端の欠落原因を修正",

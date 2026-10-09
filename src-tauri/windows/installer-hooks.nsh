@@ -1,6 +1,7 @@
 ; Complete Tauri's basic extension registration with Windows Default Apps /
 ; Open With discovery, and quote both the executable and selected file.
 !include "LogicLib.nsh"
+!include "${__FILEDIR__}\vcredist.nsh"
 
 !macro PIXVAULT_BACKUP_FILE_TYPE EXT PROGID
   ; The separate sentinel distinguishes "captured and originally empty" from
@@ -45,6 +46,7 @@
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro PIXVAULT_ENSURE_VCRUNTIME
   !insertmacro PIXVAULT_BACKUP_FILE_TYPE "jpg" "PixVault.Image"
   !insertmacro PIXVAULT_BACKUP_FILE_TYPE "jpeg" "PixVault.Image"
   !insertmacro PIXVAULT_BACKUP_FILE_TYPE "png" "PixVault.Image"

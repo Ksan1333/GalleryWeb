@@ -2214,7 +2214,7 @@ function VideoViewer({
   seekSeconds: number;
 }) {
   const nativeCanvasRef = useRef<HTMLCanvasElement>(null);
-  const playback = useVideoPlayback(item.id, videoRef, nativeCanvasRef, playbackPreferences, onLoadingChange);
+  const playback = useVideoPlayback(item.id, videoRef, nativeCanvasRef, { ...playbackPreferences, mimeType: item.mimeType }, onLoadingChange);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(item.durationSeconds ?? 0);
