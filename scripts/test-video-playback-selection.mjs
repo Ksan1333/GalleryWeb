@@ -44,7 +44,7 @@ try {
    window.opened=0;window.disposed=0;window.__TAURI_INTERNALS__={};
    Object.defineProperty(navigator,'platform',{value:'Win32'});
    HTMLMediaElement.prototype.canPlayType=function(type){return type==='video/mp4'?'maybe':'';};
-   const original=setTimeout;window.setTimeout=(fn,ms,...args)=>original(fn,ms===8000?500:ms,...args);
+   const original=setTimeout;window.setTimeout=(fn,ms,...args)=>original(fn,ms===8000||ms===5000?500:ms,...args);
  });
  const fresh=async()=>{await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__selection`);await page.waitForFunction(()=>window.current);};
  await fresh();
@@ -80,6 +80,29 @@ try {
  await fresh();
  await page.evaluate(()=>{Object.defineProperty(current().video,'duration',{value:100});Object.defineProperty(current().video,'readyState',{value:4});current().video.dispatchEvent(new Event('canplay'));current().video.dispatchEvent(new Event('playbackfallback'));});
  await page.waitForFunction(()=>current().playback.backend==='mf');
+ await fresh();
+ await page.evaluate(()=>{
+   const video=current().video;
+   Object.defineProperties(video,{duration:{value:100},readyState:{value:4},currentTime:{value:42,writable:true},paused:{value:true}});
+   video.dispatchEvent(new Event('canplay'));
+   video.dispatchEvent(new Event('seeking'));
+ });
+ await page.waitForFunction(()=>current().playback.backend==='mf');
+ await page.evaluate(()=>{nativePlayer.error=new Error('unsupported');nativePlayer.dispatchEvent(new Event('error'));});
+ await page.waitForFunction(()=>current().playback.backend==='vlc');
+ await page.evaluate(()=>{nativePlayer.readyState=4;nativePlayer.dispatchEvent(new Event('playing'));});
+ await page.waitForFunction(()=>current().playback.phase==='ready');
+ assert.deepEqual(await page.evaluate(()=>({time:nativePlayer.currentTime,paused:nativePlayer.paused})),{time:42,paused:true},'failed intermediate engine preserves requested seek and pause');
+ await fresh();
+ await page.evaluate(()=>{
+   const video=current().video;
+   Object.defineProperties(video,{duration:{value:100},readyState:{value:4}});
+   video.dispatchEvent(new Event('canplay'));
+   video.dispatchEvent(new Event('seeking'));
+   video.dispatchEvent(new Event('seeked'));
+ });
+ await page.waitForTimeout(650);
+ assert.equal(await page.evaluate(()=>opened),0,'successful browser seek cancels fallback timer');
  assert.deepEqual(errors,[]);
- console.log('PASS browser playback, codec fallback, native errors/retry, media switching, stale events, startup timeout');
+ console.log('PASS browser playback, codec fallback, native errors/retry, media switching, stale events, startup/seek timeout, position/pause restoration');
 } finally {await browser?.close();await server.close();}

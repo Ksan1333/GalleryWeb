@@ -40,6 +40,9 @@ jobs:
           Get-Command Get-AuthenticodeSignature -ErrorAction Stop | Out-Null
           Get-AuthenticodeSignature -LiteralPath (Join-Path $PSHOME 'pwsh.exe') -ErrorAction Stop | Out-Null
 
+      - name: Probe Media Foundation before the long build
+        run: cargo test --manifest-path scripts/mf-probe/Cargo.toml --target-dir src-tauri/target/mf-probe -- --nocapture
+
       - name: Install frontend dependencies
         run: |
           npm install --global pnpm@11.19.0
