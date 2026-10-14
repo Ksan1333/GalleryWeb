@@ -20,6 +20,10 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 
+#[cfg(windows)]
+#[path = "mf_playback.rs"]
+mod mf_playback;
+
 type Handle = *mut c_void;
 #[cfg(test)]
 type LockCb = unsafe extern "C" fn(Handle, *mut Handle) -> Handle;
@@ -758,11 +762,17 @@ pub async fn open_vlc_player(
     volume: f64,
     muted: bool,
     looped: bool,
+    backend: Option<String>,
 ) -> Result<String, String> {
+    let media_foundation = match backend.as_deref() {
+        None | Some("vlc") => false,
+        Some("mf") => true,
+        _ => return Err("未知の動画エンジンです。".into()),
+    };
     // Creating a cross-thread child HWND sends messages to its parent. Never
     // block the WebView/UI thread waiting for the surface's message loop.
     tauri::async_runtime::spawn_blocking(move || {
-        create_session(window, media_id, volume, muted, looped)
+        create_session(window, media_id, volume, muted, looped, media_foundation)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -773,6 +783,7 @@ fn create_session(
     volume: f64,
     muted: bool,
     looped: bool,
+    media_foundation: bool,
 ) -> Result<String, String> {
     if !volume.is_finite() {
         return Err("音量が不正です。".into());
@@ -828,6 +839,12 @@ fn create_session(
             }
             if session.cancelled.load(Ordering::Relaxed) {
                 return Ok(());
+            }
+            if media_foundation {
+                #[cfg(windows)]
+                return mf_playback::run(&path, &session, receiver, volume, muted, looped);
+                #[cfg(not(windows))]
+                return Err("Media FoundationはWindows専用です。".into());
             }
             let api = engine(&directory)?;
             if session.cancelled.load(Ordering::Relaxed) {

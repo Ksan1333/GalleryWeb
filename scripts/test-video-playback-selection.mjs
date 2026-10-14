@@ -17,8 +17,9 @@ function Fixture(){
  return <div>{playback.native?<canvas ref={canvas}/>:<video ref={video}/>}<span>{playback.phase}</span></div>;
 } createRoot(document.getElementById('root')).render(<Fixture/>);`;
 const fakeVlc = `export class VlcVideoHandle extends EventTarget {
- readyState=0; error=null;
- constructor(){super(); window.opened++;window.nativePlayer=this;}
+ readyState=0; error=null; duration=100;currentTime=0;paused=false;
+ constructor(canvas,id,options,backend){super();this.backend=backend; window.opened++;window.nativePlayer=this;}
+ pause(){this.paused=true;}
  async dispose(){window.disposed++;}
 }`;
 const server = await createServer({ root, configFile:false, logLevel:'error',
@@ -47,12 +48,13 @@ try {
  });
  const fresh=async()=>{await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__selection`);await page.waitForFunction(()=>window.current);};
  await fresh();
- await page.evaluate(()=>{Object.defineProperty(current().video,'readyState',{value:4});current().video.dispatchEvent(new Event('canplay'));});
+ await page.evaluate(()=>{Object.defineProperty(current().video,'duration',{value:100});Object.defineProperty(current().video,'readyState',{value:4});current().video.dispatchEvent(new Event('canplay'));});
  await page.waitForFunction(()=>current().playback.phase==='ready');
  await page.waitForTimeout(600);
  assert.equal(await page.evaluate(()=>opened),0,'supported, ready media never opens VLC');
  await page.evaluate(()=>{window.oldVideo=current().video;oldVideo.dispatchEvent(new Event('error'));});
  await page.waitForFunction(()=>opened===1);
+ assert.equal(await page.evaluate(()=>current().playback.backend),'mf','browser failure first selects Media Foundation');
  await page.evaluate(()=>{nativePlayer.readyState=4;nativePlayer.dispatchEvent(new Event('playing'));});
  await page.waitForFunction(()=>current().playback.phase==='ready');
  await page.evaluate(()=>select({id:'b',mime:'video/mp4'}));
@@ -63,12 +65,21 @@ try {
  await page.waitForFunction(()=>opened===2);
  assert.equal(await page.evaluate(()=>current().playback.native),true,'unsupported containers bypass browser probing');
  await page.evaluate(()=>{nativePlayer.error=new Error('decoder failed');nativePlayer.dispatchEvent(new Event('error'));});
+ await page.waitForFunction(()=>opened===3);
+ assert.equal(await page.evaluate(()=>current().playback.backend),'vlc','MF decode failure selects VLC');
+ await page.evaluate(()=>{nativePlayer.error=new Error('VLC failed');nativePlayer.dispatchEvent(new Event('error'));});
  await page.waitForFunction(()=>current().playback.phase==='error');
  await page.evaluate(()=>current().playback.retry());
- await page.waitForFunction(()=>opened===3);
+ await page.waitForFunction(()=>opened===4);
  await fresh();
  await page.waitForFunction(()=>opened===1);
  assert.equal(await page.evaluate(()=>current().playback.native),true,'stalled browser startup falls back without conversion');
+ await fresh();
+ await page.evaluate(()=>{Object.defineProperty(current().video,'readyState',{value:4});current().video.dispatchEvent(new Event('canplay'));});
+ await page.waitForFunction(()=>current().playback.backend==='mf');
+ await fresh();
+ await page.evaluate(()=>{Object.defineProperty(current().video,'duration',{value:100});Object.defineProperty(current().video,'readyState',{value:4});current().video.dispatchEvent(new Event('canplay'));current().video.dispatchEvent(new Event('playbackfallback'));});
+ await page.waitForFunction(()=>current().playback.backend==='mf');
  assert.deepEqual(errors,[]);
  console.log('PASS browser playback, codec fallback, native errors/retry, media switching, stale events, startup timeout');
 } finally {await browser?.close();await server.close();}

@@ -43,7 +43,7 @@ export class VlcVideoHandle extends EventTarget {
     private opening: Promise<void>;
     private closing?: Promise<void>;
     private restoredVolume: number;
-    constructor(readonly canvas: HTMLCanvasElement, mediaId: string, options: Options) {
+    constructor(readonly canvas: HTMLCanvasElement, mediaId: string, options: Options, readonly backend: "mf" | "vlc" = "vlc") {
         super();
         this.level = options.volume;
         this.restoredVolume = options.volume;
@@ -51,7 +51,7 @@ export class VlcVideoHandle extends EventTarget {
         this.looping = options.loop;
         // A single video session is owned by this handle. A delayed open response
         // must be closed even if React has already navigated to another item.
-        this.opening = invoke<string>("open_vlc_player", { mediaId, volume: this.level, muted: this.silent, looped: this.looping }).then(async (id) => {
+        this.opening = invoke<string>("open_vlc_player", { mediaId, volume: this.level, muted: this.silent, looped: this.looping, backend }).then(async (id) => {
             this.id = id;
             if (this.closed) {
                 await this.releaseSession(id);

@@ -58,6 +58,8 @@ const server = await createServer({
 });
 
 function installFixture() {
+  // This suite exercises the native bridge; browser selection has its own suite.
+  HTMLMediaElement.prototype.canPlayType = () => '';
   Object.defineProperty(navigator, 'platform', {value:'Win32',configurable:true});
   // This fixture models successful playback; suppress real browser decode
   // errors from its placeholder SVG. Explicit failure tests live separately.
@@ -67,7 +69,7 @@ function installFixture() {
     playback:{state:'playing',message:'',time:60,duration:120,width:640,height:360,volume:.5,muted:false,autoReduced:false}};
   state.makeItem = (i, kind='video') => ({id:`${kind==='archive'?'book':'video'}-${i}`,rootId:'fixture-root',
     relativePath:`${['1','2','10'][i]}.${kind==='archive'?'zip':'webm'}`,path:`E:/Fixture/${['1','2','10'][i]}.${kind==='archive'?'zip':'webm'}`,
-    name:`${['1','2','10'][i]}.${kind==='archive'?'zip':'webm'}`,kind,sizeBytes:4096,width:640,height:360,
+    name:`${['1','2','10'][i]}.${kind==='archive'?'zip':'webm'}`,kind,mimeType:kind==='video'?'video/webm':undefined,sizeBytes:4096,width:640,height:360,
     durationSeconds:120,pageCount:2,isFavorite:true,ageRating:'SFW',tags:[{id:'tag1',name:'fixture',color:'#448844',source:'ai',confidence:.8}],
     modifiedAt:'2026-09-06T00:00:00Z',thumbnailPath:svg});
   const times = new WeakMap(), paused = new WeakMap();

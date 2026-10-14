@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "galleryweb"
-version = "0.7.10"
+version = "0.8.0"
 dependencies = [
  "csv",
  "gif",
@@ -1272,6 +1272,8 @@ dependencies = [
  "trash",
  "uuid",
  "walkdir",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
  "windows-sys 0.61.2",
  "zip",
 ]

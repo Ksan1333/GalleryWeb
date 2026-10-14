@@ -1,5 +1,9 @@
 param([string]$Source)
 $ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSVersion.Major -le 5) {
+    Import-Module "$env:WINDIR\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1" -Force
+    Import-Module "$env:WINDIR\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1" -Force
+}
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $directory = Join-Path $projectRoot 'src-tauri\target\vcredist'
 $destination = Join-Path $directory 'vc_redist.x64.exe'

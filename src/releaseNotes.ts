@@ -11,6 +11,17 @@ export type ReleaseNote = {
  */
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.8.0",
+    date: "2026-10-14",
+    title: "Windows標準動画エンジンとシーク操作の改善",
+    changes: [
+      "WebViewで再生・シークが進まない場合にMedia Foundationを試し、非対応時はVLCへ切り替え",
+      "現在位置を引き継ぐ再生エンジン切り替えボタンを追加",
+      "総時間不明時にシークバーが右端に張り付く問題を修正",
+      "Windows標準再生中のフレーム保存・シーク画像プレビュー・自動音量補正は未対応です。必要な場合はVLCへ切り替えてください",
+    ],
+  },
+  {
     version: "0.7.10",
     date: "2026-10-09",
     title: "WebView直接再生と起動ランタイムの自動導入",

@@ -2252,13 +2252,15 @@ function VideoViewer({
     const volume = () => { if (!volumeAnalysisSuppressRef.current) { setVolume(video.volume); setMuted(video.muted); } };
     const position = () => setPosition(video.currentTime);
     const metadata = () => {
-      const duration = Number.isFinite(video.duration) ? video.duration : 0;
+      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : (item.durationSeconds ?? 0);
       setDuration(duration);
       onMetadata({ width: video.videoWidth || undefined, height: video.videoHeight || undefined, durationSeconds: duration });
     };
     const analysis = () => { if (video instanceof VlcVideoHandle) setAutoVolumeReductionActive(video.autoReduced); };
     const events = { play: playing, playing, pause: paused, volumechange: volume, timeupdate: position, loadedmetadata: metadata, durationchange: metadata, volumeanalysis: analysis };
     for (const [name, handler] of Object.entries(events)) video.addEventListener(name, handler);
+    metadata();
+    position();
     return () => { for (const [name, handler] of Object.entries(events)) video.removeEventListener(name, handler); };
   }, [videoRef, item.id, playback.generation, onMetadata]);
 
@@ -2438,7 +2440,7 @@ function VideoViewer({
   }, [item.id, menusHidden, revealControls]);
 
   useEffect(() => {
-    if (!seeking || !playback.native) return;
+    if (!seeking || !playback.native || playback.backend === "mf") return;
     let active = true;
     const timer = window.setTimeout(() => {
       const player = videoRef.current;
@@ -2475,7 +2477,7 @@ function VideoViewer({
       video.pause();
       setPlaying(false);
     }
-    const next = Math.max(0, Math.min(Number.isFinite(video.duration) ? video.duration : duration, video.currentTime + seconds));
+    const next = Math.max(0, Math.min(Number.isFinite(video.duration) && video.duration > 0 ? video.duration : duration, video.currentTime + seconds));
     video.currentTime = next;
     setPosition(next);
     return next;
@@ -2483,7 +2485,7 @@ function VideoViewer({
 
   const seekTo = (nextValue: number) => {
     const video = videoRef.current;
-    const safeDuration = Number.isFinite(video?.duration) ? video?.duration ?? duration : duration;
+    const safeDuration = video && Number.isFinite(video.duration) && video.duration > 0 ? video.duration : duration;
     const next = Math.max(0, Math.min(Math.max(0, safeDuration), nextValue));
     setPreviewTime(next);
     setPosition(next);
@@ -2514,7 +2516,7 @@ function VideoViewer({
     if (!video) return;
     if (!relativeScrubActiveRef.current && !beginRelativeScrub()) return;
     const offset = Math.max(-60, Math.min(60, requestedOffset));
-    const safeDuration = Number.isFinite(video.duration) ? video.duration : duration;
+    const safeDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : duration;
     const target = Math.max(0, Math.min(Math.max(0, safeDuration), relativeAnchorRef.current + offset));
     setRelativeOffset(offset);
     setRelativeTargetTime(target);
@@ -2750,7 +2752,7 @@ function VideoViewer({
         }}
         title={`クリックで再生・停止／左右をダブルタップで${seekSeconds}秒移動／ホイールで音量調整`}
       >
-        {playback.native ? <canvas ref={nativeCanvasRef} className="pv-vlc-canvas" aria-label="libVLCによる動画表示" /> : <video
+        {playback.native ? <canvas ref={nativeCanvasRef} className="pv-vlc-canvas" aria-label={playback.backend === "mf" ? "Media Foundationによる動画表示" : "libVLCによる動画表示"} /> : <video
           ref={videoRef as React.RefObject<HTMLVideoElement | null>}
           src={source}
           controls={false}
@@ -2788,9 +2790,10 @@ function VideoViewer({
           <input
             type="range"
             min={0}
-            max={Math.max(duration, 0.01)}
+            max={duration > 0 ? duration : 1}
+            disabled={!(duration > 0)}
             step={0.01}
-            value={Math.min(position, Math.max(duration, 0.01))}
+            value={duration > 0 ? Math.max(0, Math.min(position, duration)) : 0}
             aria-label="動画の再生位置"
             aria-valuetext={`${formatTime(position)} / ${formatTime(duration)}`}
             style={{ "--pv-seek-progress": `${duration > 0 ? position / duration * 100 : 0}%` } as React.CSSProperties}
@@ -2868,6 +2871,7 @@ function VideoViewer({
           </div>
         </div>
         <div className="pv-video-transport" aria-label="動画操作">
+          {playback.canSwitch && <button type="button" onClick={() => videoRef.current?.dispatchEvent(new Event("playbackfallback"))} title="現在位置を引き継いで再生エンジンを切り替えます">{playback.backend === "mf" ? "VLCで再生" : "Windows標準で再生"}</button>}
           <IconControl icon="rewind10" label="10秒戻る" onClick={() => seekBy(-10)} />
           <IconControl icon="stepBack" label="1コマ戻る" onClick={() => seekBy(-FRAME_SECONDS, true)} />
           <button type="button" className="pv-video-play" onClick={() => void togglePlayback()} aria-label={playing ? "一時停止" : "再生"}>
