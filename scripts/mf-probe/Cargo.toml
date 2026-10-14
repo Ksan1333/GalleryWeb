@@ -10,3 +10,5 @@ windows = { version = "0.61", features = ["Win32_Media_MediaFoundation", "Win32_
 
 [dev-dependencies]
 tempfile = "3"
+mp4 = "0.14"
+openh264 = "0.9"

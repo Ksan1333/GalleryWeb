@@ -61,17 +61,20 @@ pub(super) fn create_engine(
         attributes.SetUnknown(&MF_MEDIA_ENGINE_CALLBACK, notify)?;
         if let Some(hwnd) = hwnd {
             attributes.SetUINT64(&MF_MEDIA_ENGINE_PLAYBACK_HWND, hwnd as u64)?;
+        } else {
+            // Headless test path: decoded video stays in frame-server mode.
+            // No HWND, audio endpoint or visible desktop is required.
+            attributes.SetUINT32(&MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, 87)?; // DXGI_FORMAT_B8G8R8A8_UNORM
         }
         let factory: IMFMediaEngineClassFactory =
             CoCreateInstance(&CLSID_MFMediaEngineClassFactory, None, CLSCTX_INPROC_SERVER)?;
-        let flags = if hwnd.is_none() {
-            MF_MEDIA_ENGINE_AUDIOONLY.0 as u32
-        } else {
-            0
-        };
-        Ok(Engine(factory.CreateInstance(flags, &attributes)?))
+        Ok(Engine(factory.CreateInstance(0, &attributes)?))
     }
 }
+
+#[cfg(test)]
+#[path = "test_video_fixture.rs"]
+mod test_fixture;
 
 #[cfg(test)]
 mod tests {
@@ -81,25 +84,11 @@ mod tests {
 
     #[test]
     fn media_foundation_headless_load_seek_and_release() {
-        // Synthetic silent PCM only: no HWND, visible app, user media or audio.
+        // Synthetic video without an audio track: the CI runner has no audio sink.
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("日本語 seek.wav");
-        let data_size = 48000u32 * 2 * 4;
-        let mut wav = Vec::new();
-        wav.extend(b"RIFF");
-        wav.extend((36 + data_size).to_le_bytes());
-        wav.extend(b"WAVEfmt ");
-        wav.extend(16u32.to_le_bytes());
-        wav.extend(1u16.to_le_bytes());
-        wav.extend(1u16.to_le_bytes());
-        wav.extend(48000u32.to_le_bytes());
-        wav.extend(96000u32.to_le_bytes());
-        wav.extend(2u16.to_le_bytes());
-        wav.extend(16u16.to_le_bytes());
-        wav.extend(b"data");
-        wav.extend(data_size.to_le_bytes());
-        wav.resize(44 + data_size as usize, 0);
-        std::fs::write(&path, &wav).unwrap();
+        let path = directory.path().join("日本語 seek.mp4");
+        test_fixture::create_h264_mp4(&path);
+        let original = std::fs::read(&path).unwrap();
         {
             let _runtime = Runtime::start().unwrap();
             let (tx, events) = mpsc::channel();
@@ -123,10 +112,16 @@ mod tests {
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
-                assert!((engine.0.GetDuration() - 4.0).abs() < 0.1);
+                assert!((engine.0.GetDuration() - 0.3).abs() < 0.01);
+                let (mut width, mut height) = (0, 0);
+                engine
+                    .0
+                    .GetNativeVideoSize(Some(&mut width), Some(&mut height))
+                    .unwrap();
+                assert_eq!((width, height), (64, 48));
                 engine.0.Play().unwrap();
                 engine.0.Pause().unwrap();
-                engine.0.SetCurrentTime(2.0).unwrap();
+                engine.0.SetCurrentTime(0.1).unwrap();
                 let deadline = Instant::now() + Duration::from_secs(5);
                 loop {
                     assert!(Instant::now() < deadline, "MF seek timed out");
@@ -138,11 +133,11 @@ mod tests {
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
-                assert!((engine.0.GetCurrentTime() - 2.0).abs() < 0.1);
+                assert!((engine.0.GetCurrentTime() - 0.1).abs() < 0.05);
                 assert!(engine.0.IsPaused().as_bool());
             }
         }
-        assert_eq!(std::fs::read(&path).unwrap(), wav);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
         std::fs::remove_file(path).expect("MF shutdown must release the source file");
     }
 }
