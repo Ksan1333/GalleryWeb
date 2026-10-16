@@ -80,7 +80,40 @@ mod test_fixture;
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
-    use windows::core::BSTR;
+    use windows::{
+        Win32::{
+            Foundation::{RECT, S_OK},
+            Graphics::Imaging::*,
+        },
+        core::{BSTR, Interface},
+    };
+
+    unsafe fn receive_frame(media: &IMFMediaEngine, bitmap: &IWICBitmap) -> bool {
+        unsafe {
+            let mut timestamp = 0;
+            // The generated Result<i64> binding erases S_FALSE. Keep it here
+            // so an empty tick never attempts to copy a nonexistent frame.
+            let status = (media.vtable().OnVideoStreamTick)(media.as_raw(), &mut timestamp);
+            status.ok().unwrap();
+            if status != S_OK {
+                return false;
+            }
+            media
+                .TransferVideoFrame(
+                    bitmap,
+                    None,
+                    &RECT {
+                        left: 0,
+                        top: 0,
+                        right: 64,
+                        bottom: 48,
+                    },
+                    None,
+                )
+                .unwrap();
+            true
+        }
+    }
 
     #[test]
     fn media_foundation_headless_load_seek_and_release() {
@@ -95,6 +128,11 @@ mod tests {
             let notify: IMFMediaEngineNotify = Notify(tx).into();
             let engine = create_engine(None, &notify).unwrap();
             unsafe {
+                let factory: IWICImagingFactory =
+                    CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).unwrap();
+                let bitmap = factory
+                    .CreateBitmap(64, 48, &GUID_WICPixelFormat32bppBGRA, WICBitmapCacheOnLoad)
+                    .unwrap();
                 engine.0.SetMuted(true).unwrap();
                 engine
                     .0
@@ -119,22 +157,36 @@ mod tests {
                     .GetNativeVideoSize(Some(&mut width), Some(&mut height))
                     .unwrap();
                 assert_eq!((width, height), (64, 48));
+                let mut frames = usize::from(receive_frame(&engine.0, &bitmap));
                 engine.0.Play().unwrap();
                 engine.0.Pause().unwrap();
                 engine.0.SetCurrentTime(0.1).unwrap();
                 let deadline = Instant::now() + Duration::from_secs(5);
                 loop {
-                    assert!(Instant::now() < deadline, "MF seek timed out");
-                    if events
-                        .try_iter()
-                        .any(|(e, _, _)| e == MF_MEDIA_ENGINE_EVENT_SEEKED.0 as u32)
-                    {
+                    assert!(
+                        Instant::now() < deadline,
+                        "MF seek timed out: time={}, seeking={}, ready={}, frames={frames}",
+                        engine.0.GetCurrentTime(),
+                        engine.0.IsSeeking().as_bool(),
+                        engine.0.GetReadyState()
+                    );
+                    frames += usize::from(receive_frame(&engine.0, &bitmap));
+                    let mut seeked = false;
+                    for (event, parameter, result) in events.try_iter() {
+                        assert_ne!(
+                            event, MF_MEDIA_ENGINE_EVENT_ERROR.0 as u32,
+                            "MF seek error: category={parameter}, HRESULT=0x{result:08X}"
+                        );
+                        seeked |= event == MF_MEDIA_ENGINE_EVENT_SEEKED.0 as u32;
+                    }
+                    if seeked {
                         break;
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 assert!((engine.0.GetCurrentTime() - 0.1).abs() < 0.05);
                 assert!(engine.0.IsPaused().as_bool());
+                assert!(frames > 0, "MF must produce a decoded video frame");
             }
         }
         assert_eq!(std::fs::read(&path).unwrap(), original);
