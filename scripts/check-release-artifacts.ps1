@@ -1,8 +1,23 @@
 param(
-    [switch]$RequireSignature
+    [switch]$RequireSignature,
+    [switch]$CheckSigningToolsOnly
 )
 
 $ErrorActionPreference = "Stop"
+# Windows PowerShell needs its trusted in-box module when inherited module
+# paths have been modified. PowerShell 7 must use its own module, not a 5.1
+# compatibility proxy which collides with already-loaded signing commands.
+if ($PSVersionTable.PSVersion.Major -le 5) {
+    $securityModule = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
+    Import-Module -Name $securityModule -Force
+}
+Get-Command Get-AuthenticodeSignature -ErrorAction Stop | Out-Null
+if ($CheckSigningToolsOnly) {
+    $shellName = if ($PSVersionTable.PSVersion.Major -le 5) { 'powershell.exe' } else { 'pwsh.exe' }
+    Get-AuthenticodeSignature -LiteralPath (Join-Path $PSHOME $shellName) -ErrorAction Stop | Out-Null
+    Write-Host "Signing tools check passed: PowerShell $($PSVersionTable.PSVersion)"
+    return
+}
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $package = Get-Content -LiteralPath (Join-Path $projectRoot "package.json") -Raw | ConvertFrom-Json
 $packageLockText = Get-Content -LiteralPath (Join-Path $projectRoot "package-lock.json") -Raw
@@ -46,12 +61,6 @@ if ($installer.VersionInfo.FileVersion -ne $version -or $installer.VersionInfo.P
     throw "Installer metadata does not match $version"
 }
 
-# Codex/bundled Node runtimes can prepend a copied PowerShell module directory
-# whose security module is blocked by Windows' AuthorizationManager. Import the
-# trusted in-box module explicitly so this check behaves the same inside and
-# outside package-manager scripts.
-$securityModule = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
-Import-Module -Name $securityModule -Force
 $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
 if ($RequireSignature -and $signature.Status -ne "Valid") {
     throw "A valid Authenticode signature is required; current status is $($signature.Status)"

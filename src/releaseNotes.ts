@@ -12,7 +12,7 @@ export type ReleaseNote = {
 export const releaseNotes: ReleaseNote[] = [
   {
     version: "0.8.0",
-    date: "2026-10-14",
+    date: "2026-10-16",
     title: "Windows標準動画エンジンとシーク操作の改善",
     changes: [
       "WebViewで再生・シークが進まない場合にMedia Foundationを試し、非対応時はVLCへ切り替え",
