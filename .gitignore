@@ -15,6 +15,9 @@ src-tauri/target/
 release/
 *.exe
 *.local
+.tools/
+native/**/bin/
+native/**/obj/
 
 # Editor directories and files
 .vscode/*

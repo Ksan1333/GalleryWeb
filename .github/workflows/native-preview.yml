@@ -1,0 +1,39 @@
+name: Native reader preview
+on:
+  push:
+    branches: [codex/native-reader-preview]
+    paths: ['native/**', '.github/workflows/native-preview.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Core tests (no windows)
+        run: dotnet run --project native/PixVault.Core.Tests -c Release
+      - name: WIC imaging tests (no windows)
+        run: dotnet run --project native/PixVault.Imaging.Tests -c Release
+      - name: Publish self-contained reader
+        run: dotnet publish native/PixVault.Native -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o release/native-0.9.0-alpha.1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pixvault-native-0.9.0-alpha.1
+          path: release/native-0.9.0-alpha.1/
+          if-no-files-found: error
+      - name: Clean rebuildable outputs after upload
+        if: always()
+        run: |
+          dotnet clean native/PixVault.Core.Tests -c Release
+          dotnet clean native/PixVault.Imaging.Tests -c Release
+          dotnet clean native/PixVault.Native -c Release -r win-x64
